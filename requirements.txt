@@ -1,0 +1,4 @@
+rf-detr
+megadetector-utils
+tqdm
+pillow
