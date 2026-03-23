@@ -21,13 +21,18 @@ import torch
 from datetime import datetime
 from PIL import Image
 from tqdm import tqdm
-from concurrent.futures import ThreadPoolExecutor
+import queue
+import math
+
+from multiprocessing import Process
+from threading import Thread
 
 # RF-DETR model classes
 from rfdetr import RFDETRBase, RFDETRLarge
 from rfdetr import RFDETRNano
 
 from megadetector.utils.ct_utils import round_float, round_float_array
+from megadetector.utils.ct_utils import sort_list_of_dicts_by_key
 from megadetector.detection.run_detector import CONF_DIGITS, COORD_DIGITS
 from megadetector.utils.path_utils import find_images
 
@@ -40,6 +45,9 @@ MODEL_TYPE_MAP = {
 
 # By default, exclude detections below this confidence level
 DEFAULT_CONFIDENCE_THRESHOLD = 0.005
+
+# Default maximum number of images to buffer ahead of inference
+DEFAULT_MAX_QUEUE_SIZE = 20
 
 
 #%% Support functions
@@ -117,22 +125,26 @@ def load_image(image_path):
         return None
 
 
-def load_images_batch(image_paths, num_workers=4):
+def _producer_func(q, image_paths, image_folder):
     """
-    Load a batch of images using multiple threads.
+    Producer function for the image loading queue.
+
+    Loads images from disk and puts (relative_path, PIL.Image) tuples onto a
+    bounded queue.  Sends None when all images have been loaded.
 
     Args:
-        image_paths (list): List of image paths to load
-        num_workers (int): Number of parallel workers
-
-    Returns:
-        list: List of (path, image) tuples. Image is None if loading failed.
+        q (queue.Queue): bounded queue shared with the consumer
+        image_paths (list): absolute image file paths to load
+        image_folder (str): root folder used to compute relative paths
     """
 
-    with ThreadPoolExecutor(max_workers=num_workers) as executor:
-        images = list(executor.map(load_image, image_paths))
+    for path in image_paths:
+        rel_path = os.path.relpath(path, image_folder).replace('\\', '/')
+        img = load_image(path)
+        q.put((rel_path, img))
 
-    return list(zip(image_paths, images))
+    # Signal that this producer is finished
+    q.put(None)
 
 
 def convert_detections_to_md_format(detections, image_width, image_height):
@@ -207,7 +219,8 @@ def run_detector_batch(
     batch_size=1,
     model_type=None,
     include_image_size=False,
-    optimize_for_inference=False
+    optimize_for_inference=False,
+    worker_type='thread'
 ):
     """
     Run RF-DETR detector on all images in a folder.
@@ -226,6 +239,8 @@ def run_detector_batch(
         optimize_for_inference (bool, optional): Whether to optimize the model for inference,
             which should be a free lunch, but as of 9/2025 there is some risk of accuracy
             regression
+        worker_type (str, optional): 'thread' or 'process' for image loading workers
+            (default: 'thread')
 
     Returns:
         dict: Results dictionary in MegaDetector format
@@ -286,41 +301,78 @@ def run_detector_batch(
         print('No images found, exiting')
         return None
 
-    # Process images
+    # Process images using a producer/consumer pattern: loader threads populate a
+    # bounded queue, and the main thread pulls from that queue for inference.
     results = []
     start_time = time.time()
 
-    # Process in batches
-    for batch_start in tqdm(range(0, len(image_files), batch_size), desc='Processing'):
+    max_queue_size = max(DEFAULT_MAX_QUEUE_SIZE, 4 * batch_size)
 
-        batch_end = min(batch_start + batch_size, len(image_files))
-        batch_paths = image_files[batch_start:batch_end]
+    # Split image list across loader workers and start producer workers
+    if worker_type == 'thread':
+        image_queue = queue.Queue(maxsize=max_queue_size)
+    else:
+        import multiprocessing
+        image_queue = multiprocessing.Queue(maxsize=max_queue_size)
 
-        # Load images
-        #
-        # TODO: this is useful for testing batch inference, but it doesn't actually
-        # parallelize inference and loading, i.e. the loading still blocks inference.
-        batch_loaded = load_images_batch(batch_paths, num_workers=loader_workers)
+    chunks = []
+    chunk_size = math.ceil(len(image_files) / loader_workers)
+    for i in range(loader_workers):
+        chunk = image_files[i * chunk_size : (i + 1) * chunk_size]
+        if len(chunk) > 0:
+            chunks.append(chunk)
 
-        # Separate successful loads from failures
-        valid_items = []
-        for path, img in batch_loaded:
-            rel_path = os.path.relpath(path, image_folder).replace('\\', '/')
+    worker_class = Thread if worker_type == 'thread' else Process
+
+    producers = []
+    for chunk in chunks:
+        t = worker_class(target=_producer_func, args=(image_queue, chunk, image_folder))
+        t.daemon = True
+        t.start()
+        producers.append(t)
+
+    # Consumer: pull loaded images from the queue and run inference in batches
+    n_producers_finished = 0
+    n_total_producers = len(producers)
+    n_batches = math.ceil(len(image_files) / batch_size)
+
+    pbar = tqdm(total=len(image_files), desc='Processing')
+
+    while (n_producers_finished < n_total_producers):
+
+        # Collect a batch of images from the queue
+        valid_items = []  # list of (rel_path, img) for images that loaded successfully
+        n_collected = 0
+
+        while (n_collected < batch_size) and (n_producers_finished < n_total_producers):
+
+            item = image_queue.get()
+
+            # None is the sentinel indicating a producer thread has finished
+            if item is None:
+                n_producers_finished += 1
+                continue
+
+            rel_path, img = item
+            n_collected += 1
 
             if img is None:
-                # Failed to load image
                 results.append({
                     'file': rel_path,
                     'failure': 'Image could not be loaded'
                 })
             else:
-                valid_items.append((path, rel_path, img))
+                valid_items.append((rel_path, img))
+
+        # ...while collecting a batch
+
+        pbar.update(n_collected)
 
         if len(valid_items) == 0:
             continue
 
         # Run inference
-        images_for_inference = [item[2] for item in valid_items]
+        images_for_inference = [item[1] for item in valid_items]
 
         try:
             if len(images_for_inference) == 1:
@@ -330,7 +382,7 @@ def run_detector_batch(
         except Exception as e:
             # If batch inference fails, mark all images in batch as failed
             print(f'Error during inference: {e}')
-            for _, rel_path, _ in valid_items:
+            for rel_path, _ in valid_items:
                 results.append({
                     'file': rel_path,
                     'failure': f'Inference error: {str(e)}'
@@ -338,7 +390,7 @@ def run_detector_batch(
             continue
 
         # Convert detections to MegaDetector format
-        for (path, rel_path, img), detections in zip(valid_items, detections_list):
+        for (rel_path, img), detections in zip(valid_items, detections_list):
             img_width, img_height = img.size
 
             md_detections = convert_detections_to_md_format(
@@ -356,13 +408,20 @@ def run_detector_batch(
 
             results.append(result)
 
-        # ...for each image
+        # ...for each image in the batch
 
-    # ...for each batch
+    # ...while producers are still running
+
+    pbar.close()
+
+    for t in producers:
+        t.join()
 
     elapsed = time.time() - start_time
     images_per_second = len(image_files) / elapsed if elapsed > 0 else 0
     print(f'Processed {len(image_files)} images in {elapsed:.1f}s ({images_per_second:.2f} images/sec)')
+
+    results = sort_list_of_dicts_by_key(results,'file')
 
     # Build output structure
     output = {
@@ -470,6 +529,14 @@ def main():
         help='Run optimize_for_inference() after model load'
     )
 
+    parser.add_argument(
+        '--worker_type',
+        type=str,
+        default='thread',
+        choices=['thread', 'process'],
+        help='Use threads or processes for image loading workers (default: thread)'
+    )
+
     if len(sys.argv) == 1:
         parser.print_help()
         sys.exit(1)
@@ -486,7 +553,8 @@ def main():
         batch_size=args.batch_size,
         model_type=args.model_type,
         include_image_size=args.include_image_size,
-        optimize_for_inference=args.optimize_for_inference
+        optimize_for_inference=args.optimize_for_inference,
+        worker_type=args.worker_type
     )
 
 
