@@ -22,6 +22,7 @@ These models represent an initial training effort. They perform reasonably well 
 
 | Model | Architecture | Input image size | Target classes | Dataset | License |
 |--|--|--|--|--|--|
+| [community-fish-detector-2026.02.02-rf-detr-nano-640.pth](https://github.com/filippovarini/community-fish-detector/releases/download/cfd-2026.02.02-rf-detr-nano/community-fish-detector-2026.02.02-rf-detr-nano-640.pth) | [RF-DETR Nano](https://rfdetr.roboflow.com/reference/nano/) | 640 |  1 (fish) | [Community Fish Detection Dataset](https://lila.science/datasets/community-fish-detection-dataset) | Apache |
 | [cfd-yolov12x-1.00.pt](https://github.com/WildHackers/community-fish-detector/releases/download/cfd-1.00-yolov12x/cfd-yolov12x-1.00.pt) | [YOLOv12x](https://docs.ultralytics.com/models/yolo12/) | 1024 |  1 (fish) | [Community Fish Detection Dataset](https://lila.science/datasets/community-fish-detection-dataset) | AGPL |
 
 ## Quick start
@@ -37,7 +38,7 @@ cd community-fish-detector
 
 ### Download the model weights
 
-- You can find and download the `.pt` models from the [GitHub Releases]([url](https://github.com/WildHackers/community-fish-detector/releases))
+- You download weights from the [Releases page]([url](https://github.com/WildHackers/community-fish-detector/releases)).
 
 ### Install dependencies
 
