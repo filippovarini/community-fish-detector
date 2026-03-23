@@ -49,25 +49,35 @@ pip install -r requirements.txt
 
 #### Command-line batch inference 
 
-```bash
-python rf_detr_batch_inference.py "/path/to/your/model.pt" "/path/to/your/image/folder" "/path/to/your/output/file.json" --image_size 640
-```
+`rf_detr_batch_inference.py` runs the model recursively on a folder of images, and writes results in [MegaDetector output format](http://lila.science/megadetector-output-format).  Be sure to specify `--image_size 640`; the RF-DETR Nano architecture defaults to 384, but our detector was fine-tuned at 640, and we expect that you will get better results at 640.
 
-Be sure to specify `--image_size 640`; the RF-DETR Nano architecture defaults to 384, but our detector was fine-tuned at 640, and we expect that you will get better results at 640.
+```bash
+python rf_detr_batch_inference.py "/path/to/your/model.pth" "/path/to/your/image/folder" "/path/to/your/output/file.json" --image_size 640
+```
 
 #### Programmatic inference
 
 ```python
 from rfdetr import RFDETRNano
+import supervision as sv
+from PIL import Image
 
 # Load model
-model = RFDetrNano(pretrain_weights="/path/to/your/model.pt", resolution=640)
+model = RFDETRNano(pretrain_weights="/path/to/your/model.pth", resolution=640)
 
-# Run on an image or folder
-results = model.predict(source="path/to/images_or_videos", imgsz=1024)
+# Run on an image
+image = Image.open("/path/to/your/image.jpg")
+detections = model.predict(image, threshold=0.3)
 
-# Visualize results
-results[0].show()
+# Annotate and save the result
+box_annotator = sv.BoxAnnotator()
+label_annotator = sv.LabelAnnotator()
+
+labels = [f"fish {conf:.2f}" for conf in detections.confidence]
+
+annotated = box_annotator.annotate(image.copy(), detections)
+annotated = label_annotator.annotate(annotated, detections, labels=labels)
+annotated.save("/path/to/your/output.jpg")
 ```
 
 Be sure to specify `resolution=640`; the RF-DETR Nano architecture defaults to 384, but our detector was fine-tuned at 640, and we expect that you will get better results at 640.
