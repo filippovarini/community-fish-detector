@@ -1,4 +1,3 @@
-rf-detr
+rfdetr
 megadetector-utils
-tqdm
-pillow
+

@@ -6,7 +6,7 @@ rf_detr_batch_inference.py
 Run an RF-DETR detector on a folder of images, producing output in the
 MegaDetector batch output format.
 
-https://github.com/agentmorris/MegaDetector/tree/main/megadetector/api/batch_processing#megadetector-batch-output-format
+http://lila.science/megadetector-output-format
 """
 
 #%% Imports and constants
@@ -27,7 +27,7 @@ from concurrent.futures import ThreadPoolExecutor
 from rfdetr import RFDETRBase, RFDETRLarge
 from rfdetr import RFDETRNano
 
-from megadetector.utils.ct_utils import round_float
+from megadetector.utils.ct_utils import round_float, round_float_array
 from megadetector.detection.run_detector import CONF_DIGITS, COORD_DIGITS
 from megadetector.utils.path_utils import find_images
 
@@ -150,7 +150,7 @@ def convert_detections_to_md_format(detections, image_width, image_height):
 
     md_detections = []
 
-    if detections is None or len(detections) == 0:
+    if (detections is None) or (len(detections) == 0):
         return md_detections
 
     for i_detection in range(len(detections)):
@@ -176,12 +176,10 @@ def convert_detections_to_md_format(detections, image_width, image_height):
         # RF-DETR class_ids are 0-indexed when returned from the API
         class_id = int(detections.class_id[i_detection])
 
-        # ...but we are loading class names from the model "class_names" dict,
-        # which uses 1-indexed class IDs.  Increment to match.
-        category = str(class_id + 1)
+        category = str(class_id)
 
-        bbox = round_float([x_min_norm, y_min_norm, width_norm, height_norm],
-                           precision=COORD_DIGITS)
+        bbox = round_float_array([x_min_norm, y_min_norm, width_norm, height_norm],
+                                 precision=COORD_DIGITS)
         conf = round_float(conf, precision=CONF_DIGITS)
 
         md_detections.append({
@@ -197,11 +195,13 @@ def convert_detections_to_md_format(detections, image_width, image_height):
 # ...def convert_detections_to_md_format(...)
 
 
+#%% Batch inference function
+
 def run_detector_batch(
     detector_file,
-    folder,
+    image_folder,
     output_file,
-    image_size=640,
+    image_size=None,
     loader_workers=4,
     threshold=DEFAULT_CONFIDENCE_THRESHOLD,
     batch_size=1,
@@ -214,9 +214,10 @@ def run_detector_batch(
 
     Args:
         detector_file (str): Path to .pth checkpoint file
-        folder (str): Path to folder containing images
+        image_folder (str): Path to folder containing images
         output_file (str): Path to output .json file
-        image_size (int, optional): Image resolution for inference
+        image_size (int, optional): Image resolution for inference, None to load architecture
+            default
         loader_workers (int, optional): Number of parallel image loaders
         threshold (float, optional): Confidence threshold for detections
         batch_size (int, optional): Batch size for inference
@@ -232,7 +233,7 @@ def run_detector_batch(
 
     # Validate inputs
     assert os.path.isfile(detector_file), f'Detector file not found: {detector_file}'
-    assert os.path.isdir(folder), f'Input folder not found: {folder}'
+    assert os.path.isdir(image_folder), f'Input folder not found: {image_folder}'
     assert output_file.endswith('.json'), 'Output file must have .json extension'
 
     # Determine model type
@@ -249,7 +250,14 @@ def run_detector_batch(
     # Load model
     print(f'Loading {model_type} model from {detector_file}...')
     model_class = MODEL_TYPE_MAP[model_type]
-    model = model_class(resolution=image_size, pretrain_weights=detector_file)
+    if image_size is not None:
+        model = model_class(resolution=image_size, pretrain_weights=detector_file)
+        assert image_size == model.model_config.resolution, 'Model image size error'
+    else:
+        model = model_class(pretrain_weights=detector_file)
+        image_size =  model.model_config.resolution
+        print('Loaded default image size {} from model'.format(image_size))
+
     print('Model loaded successfully')
 
     if optimize_for_inference:
@@ -259,16 +267,19 @@ def run_detector_batch(
 
     # Get class names from model
     #
-    # model.class_names is a dict mapping 1-indexed class IDs to names
+    # model.class_names is a list of strings.  Note to self: in older rfdetr versions, it was
+    # a dict mapping 1-indexed class IDs to names.
     class_names = model.class_names
     print(f'Class names: {class_names}')
 
-    # Build detection_categories dict (already 1-indexed string keys)
-    detection_categories = {str(k): v for k, v in class_names.items()}
+    # Build detection_categories dict
+    detection_categories = {}
+    for i_class,class_name in enumerate(class_names):
+        detection_categories[str(i_class)] = class_name
 
     # Find all images
-    print(f'Searching for images in {folder}...')
-    image_files = find_images(folder, recursive=True, return_relative_paths=False)
+    print(f'Searching for images in {image_folder}...')
+    image_files = find_images(image_folder, recursive=True, return_relative_paths=False)
     print(f'Found {len(image_files)} images')
 
     if len(image_files) == 0:
@@ -294,7 +305,7 @@ def run_detector_batch(
         # Separate successful loads from failures
         valid_items = []
         for path, img in batch_loaded:
-            rel_path = os.path.relpath(path, folder).replace('\\', '/')
+            rel_path = os.path.relpath(path, image_folder).replace('\\', '/')
 
             if img is None:
                 # Failed to load image
@@ -413,8 +424,8 @@ def main():
     parser.add_argument(
         '--image_size',
         type=int,
-        default=640,
-        help='Image resolution for inference (default: 640)'
+        default=None,
+        help='Image resolution for inference (default: None)'
     )
 
     parser.add_argument(
@@ -467,7 +478,7 @@ def main():
 
     run_detector_batch(
         detector_file=args.detector_file,
-        folder=args.folder,
+        image_folder=args.folder,
         output_file=args.output_file,
         image_size=args.image_size,
         loader_workers=args.loader_workers,
