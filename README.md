@@ -26,6 +26,8 @@ These models represent an initial training effort. They perform reasonably well 
 
 ## Quick start
 
+These instructions describe the process for running the RF-DETR version of the model.  The YOLOv12x version is deprecated, but you can see instructions for running it in an [older version of this README](https://github.com/filippovarini/community-fish-detector/tree/35564151a9f0f9c639ec5d0eb758fe35a64fa687?tab=readme-ov-file#quick-start).
+
 ### Clone the repo
 
 ```bash
@@ -34,43 +36,63 @@ cd community-fish-detector
 ```
 
 ### Download the model weights
+
 - You can find and download the `.pt` models from the [GitHub Releases]([url](https://github.com/WildHackers/community-fish-detector/releases))
 
 ### Install dependencies
 
 ```bash
-pip install ultralytics
+pip install -r requirements.txt 
 ```
 
 ### Run inference
 
-```python
-from ultralytics import YOLO
+#### Command-line batch inference 
 
-# Load model
-model = YOLO("path/to/your/model.pt")
+`rf_detr_batch_inference.py` runs the model recursively on a folder of images, and writes results in [MegaDetector output format](http://lila.science/megadetector-output-format).
 
-# Run on an image or folder
-results = model.predict(source="path/to/images_or_videos", imgsz=1024)
-
-# Visualize results
-results[0].show()
+```bash
+python rf_detr_batch_inference.py "/path/to/your/model.pth" "/path/to/your/image/folder" "/path/to/your/output/file.json"
 ```
 
-⚠️ Remember to set the image size to 1024 (`imgsz=1024`); YOLO inference tools default to an image size of 640.
+#### Programmatic inference
 
+```python
+from rfdetr import RFDETRNano
+import supervision as sv
+from PIL import Image
+
+# Load model
+model = RFDETRNano(pretrain_weights="/path/to/your/model.pth", resolution=640)
+
+# Run on an image
+image = Image.open("/path/to/your/image.jpg")
+detections = model.predict(image, threshold=0.3)
+
+# Annotate and save the result
+box_annotator = sv.BoxAnnotator()
+label_annotator = sv.LabelAnnotator()
+
+labels = [f"fish {conf:.2f}" for conf in detections.confidence]
+
+annotated = box_annotator.annotate(image.copy(), detections)
+annotated = label_annotator.annotate(annotated, detections, labels=labels)
+annotated.save("/path/to/your/output.jpg")
+```
+
+Be sure to specify `resolution=640`; the RF-DETR Nano architecture defaults to 384, but our detector was fine-tuned at 640, and we expect that you will get better results at 640.  This is not necessary for the batch inference script, which automatically detects the training size.
 
 ## Contributors
 
 This model was created by a collective effort of the following folks: <a href="https://www.linkedin.com/in/filippo-varini/">Filippo Varini</a>, <a href="https://dmorris.net">Dan Morris</a>, <a href="https://www.linkedin.com/in/sonny-burniston/">Sonny Burniston</a>, <a href="https://www.oceaneboulais.net/">Oceane Boulais</a>, <a href="https://www.mbari.org/person/kevin-barnard/">Kevin Barnard</a>, <a href="https://www.mbari.org/person/laura-chrobak/">Laura Chrobak</a>, <a href="https://alexvmt.github.io/">Alexander Merdian-Tarko</a>, <a href="https://www.linkedin.com/in/kameswari-devi-ayyagari-031820b7/">Devi Ayyagari</a>, <a href="https://www.linkedin.com/in/mona-dhiflaoui/">Mona Dhiflaoui</a>, <a href="https://www.linkedin.com/in/jiashu-chen-w/">Joshua Chen</a>, and many others.
 
-If you don't see your name, please [email us](mailto:fppvrn@gmail.com).
+If you contributed, but you don't see your name here, please [email us](mailto:fppvrn@gmail.com).
 
 We welcome further contributions; if you have a dataset that could expand coverage, or want to contribute to improving the model, please [reach out](mailto:fppvrn@gmail.com)!
 
 ## Example Predictions
 
-Below we want to provide some move visual examples that overlay the ground truth with the model detections, to give you a qualitative sense of the model's training domain.
+Below we provide some visual examples that overlay the ground truth with the model detections, to give you a qualitative sense of the model's training domain.
 
 <img src="./assets/example7.png" />
 <img src="./assets/example1.png" />
