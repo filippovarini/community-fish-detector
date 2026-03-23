@@ -52,21 +52,23 @@ DEFAULT_MAX_QUEUE_SIZE = 20
 
 #%% Support functions
 
-def detect_model_type_from_checkpoint(checkpoint_path):
+def detect_model_info_from_checkpoint(checkpoint_path):
     """
-    Detect the model type from a checkpoint file by inspecting its contents.
+    Detect model type and training resolution from a checkpoint file.
 
     Args:
         checkpoint_path (str): Path to .pth checkpoint file
 
     Returns:
-        str: Model type string (e.g., 'nano', 'base', 'large')
+        dict: Dictionary with keys:
+            - 'model_type' (str): e.g. 'nano', 'base', 'large'
+            - 'resolution' (int or None): training resolution, or None if not found
 
     Raises:
         ValueError: If model type cannot be determined
     """
 
-    print(f'Detecting model type from checkpoint: {checkpoint_path}')
+    print(f'Reading checkpoint metadata from: {checkpoint_path}')
 
     checkpoint = torch.load(checkpoint_path, weights_only=False, map_location='cpu')
 
@@ -78,6 +80,7 @@ def detect_model_type_from_checkpoint(checkpoint_path):
 
     args = checkpoint['args']
 
+    # Detect model type from pretrain_weights string
     if not hasattr(args, 'pretrain_weights'):
         raise ValueError(
             f"Checkpoint args does not contain 'pretrain_weights' field. "
@@ -87,21 +90,34 @@ def detect_model_type_from_checkpoint(checkpoint_path):
     pretrain_weights = args.pretrain_weights
     print(f'Found pretrain_weights: {pretrain_weights}')
 
-    # Extract model type from pretrain_weights string (e.g., "rf-detr-nano.pth" -> "nano")
     pretrain_weights_lower = pretrain_weights.lower()
 
+    detected_model_type = None
     for model_type in MODEL_TYPE_MAP.keys():
         if model_type in pretrain_weights_lower:
-            print(f'Detected model type: {model_type}')
-            return model_type
+            detected_model_type = model_type
+            break
 
-    raise ValueError(
-        f"Could not determine model type from pretrain_weights '{pretrain_weights}'. "
-        f"Please specify --model_type explicitly. "
-        f"Valid options: {list(MODEL_TYPE_MAP.keys())}"
-    )
+    if detected_model_type is None:
+        raise ValueError(
+            f"Could not determine model type from pretrain_weights '{pretrain_weights}'. "
+            f"Please specify --model_type explicitly. "
+            f"Valid options: {list(MODEL_TYPE_MAP.keys())}"
+        )
 
-# ...def detect_model_type_from_checkpoint(...)
+    print(f'Detected model type: {detected_model_type}')
+
+    # Read training resolution if available
+    resolution = getattr(args, 'resolution', None)
+    if resolution is not None:
+        print(f'Detected training resolution: {resolution}')
+
+    return {
+        'model_type': detected_model_type,
+        'resolution': resolution
+    }
+
+# ...def detect_model_info_from_checkpoint(...)
 
 
 def load_image(image_path):
@@ -251,9 +267,11 @@ def run_detector_batch(
     assert os.path.isdir(image_folder), f'Input folder not found: {image_folder}'
     assert output_file.endswith('.json'), 'Output file must have .json extension'
 
-    # Determine model type
+    # Determine model type and training resolution from checkpoint metadata
+    checkpoint_info = detect_model_info_from_checkpoint(detector_file)
+
     if model_type is None:
-        model_type = detect_model_type_from_checkpoint(detector_file)
+        model_type = checkpoint_info['model_type']
     else:
         model_type = model_type.lower()
         if model_type not in MODEL_TYPE_MAP:
@@ -261,6 +279,10 @@ def run_detector_batch(
                 f"Unknown model type: {model_type}. "
                 f"Valid options: {list(MODEL_TYPE_MAP.keys())}"
             )
+
+    if image_size is None and checkpoint_info['resolution'] is not None:
+        image_size = checkpoint_info['resolution']
+        print(f'Using training resolution from checkpoint: {image_size}')
 
     # Load model
     print(f'Loading {model_type} model from {detector_file}...')
@@ -270,8 +292,8 @@ def run_detector_batch(
         assert image_size == model.model_config.resolution, 'Model image size error'
     else:
         model = model_class(pretrain_weights=detector_file)
-        image_size =  model.model_config.resolution
-        print('Loaded default image size {} from model'.format(image_size))
+        image_size = model.model_config.resolution
+        print('Using default architecture image size: {}'.format(image_size))
 
     print('Model loaded successfully')
 

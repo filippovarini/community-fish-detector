@@ -49,10 +49,10 @@ pip install -r requirements.txt
 
 #### Command-line batch inference 
 
-`rf_detr_batch_inference.py` runs the model recursively on a folder of images, and writes results in [MegaDetector output format](http://lila.science/megadetector-output-format).  Be sure to specify `--image_size 640`; the RF-DETR Nano architecture defaults to 384, but our detector was fine-tuned at 640, and we expect that you will get better results at 640.
+`rf_detr_batch_inference.py` runs the model recursively on a folder of images, and writes results in [MegaDetector output format](http://lila.science/megadetector-output-format).
 
 ```bash
-python rf_detr_batch_inference.py "/path/to/your/model.pth" "/path/to/your/image/folder" "/path/to/your/output/file.json" --image_size 640
+python rf_detr_batch_inference.py "/path/to/your/model.pth" "/path/to/your/image/folder" "/path/to/your/output/file.json"
 ```
 
 #### Programmatic inference
@@ -80,9 +80,7 @@ annotated = label_annotator.annotate(annotated, detections, labels=labels)
 annotated.save("/path/to/your/output.jpg")
 ```
 
-Be sure to specify `resolution=640`; the RF-DETR Nano architecture defaults to 384, but our detector was fine-tuned at 640, and we expect that you will get better results at 640.
-
-
+Be sure to specify `resolution=640`; the RF-DETR Nano architecture defaults to 384, but our detector was fine-tuned at 640, and we expect that you will get better results at 640.  This is not necessary for the batch inference script, which automatically detects the training size.
 
 ## Contributors
 
