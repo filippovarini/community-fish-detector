@@ -29,17 +29,23 @@ from threading import Thread
 
 # RF-DETR model classes
 from rfdetr import RFDETRBase, RFDETRLarge
-from rfdetr import RFDETRNano
+from rfdetr import RFDETRNano, RFDETRSmall, RFDETRMedium
 
 from megadetector.utils.ct_utils import round_float, round_float_array
 from megadetector.utils.ct_utils import sort_list_of_dicts_by_key
 from megadetector.detection.run_detector import CONF_DIGITS, COORD_DIGITS
 from megadetector.utils.path_utils import find_images
 
-# Mapping from model type strings to RF-DETR classes
+# Mapping from model type strings to RF-DETR classes.
+#
+# 'base' is an older/internal name that predates the current public naming
+# (nano, small, medium, large).  It's kept here for backward compatibility
+# with legacy checkpoints whose pretrain_weights field contains 'base'.
 MODEL_TYPE_MAP = {
     'nano': RFDETRNano,
+    'small': RFDETRSmall,
     'base': RFDETRBase,
+    'medium': RFDETRMedium,
     'large': RFDETRLarge,
 }
 
@@ -52,63 +58,96 @@ DEFAULT_MAX_QUEUE_SIZE = 20
 
 #%% Support functions
 
+def _ckpt_args_get(args, field, default=None):
+    """
+    Get a field from checkpoint args, handling both dict and Namespace formats.
+
+    New checkpoints (PTL training stack) store args as a plain dict.
+    Legacy checkpoints (pre-PTL engine) stored args as an argparse.Namespace.
+
+    Args:
+        args: The checkpoint['args'] value (dict or Namespace).
+        field (str): Field name to retrieve.
+        default: Value returned when the field is absent.
+
+    Returns:
+        The field value, or default if not found.
+    """
+    if isinstance(args, dict):
+        return args.get(field, default)
+    return getattr(args, field, default)
+
+
 def detect_model_info_from_checkpoint(checkpoint_path):
     """
     Detect model type and training resolution from a checkpoint file.
+
+    Supports both legacy .pth checkpoints (argparse.Namespace args with
+    pretrain_weights) and new .pth checkpoints (dict args, as produced by the
+    PTL training stack or convert_ckpt_to_pth.py).
 
     Args:
         checkpoint_path (str): Path to .pth checkpoint file
 
     Returns:
         dict: Dictionary with keys:
-            - 'model_type' (str): e.g. 'nano', 'base', 'large'
+            - 'model_type' (str or None): e.g. 'nano', 'base', 'large', or None
+              if not determinable
             - 'resolution' (int or None): training resolution, or None if not found
 
     Raises:
-        ValueError: If model type cannot be determined
+        ValueError: If a .ckpt file is passed instead of a .pth file
     """
+
+    if checkpoint_path.lower().endswith('.ckpt'):
+        raise ValueError(
+            f"Cannot run inference directly from a .ckpt file: {checkpoint_path}\n"
+            f"PyTorch Lightning .ckpt checkpoints must be converted to .pth format first.\n"
+            f"Use convert_ckpt_to_pth.py to convert:\n"
+            f"  python convert_ckpt_to_pth.py {checkpoint_path} <model_type> <resolution>"
+        )
 
     print(f'Reading checkpoint metadata from: {checkpoint_path}')
 
     checkpoint = torch.load(checkpoint_path, weights_only=False, map_location='cpu')
 
     if 'args' not in checkpoint:
-        raise ValueError(
-            f"Checkpoint does not contain 'args' field. "
-            f"Please specify --model_type explicitly."
-        )
+        print('Checkpoint does not contain args; model type and resolution must '
+              'be specified explicitly.')
+        return {'model_type': None, 'resolution': None}
 
     args = checkpoint['args']
 
-    # Detect model type from pretrain_weights string
-    if not hasattr(args, 'pretrain_weights'):
-        raise ValueError(
-            f"Checkpoint args does not contain 'pretrain_weights' field. "
-            f"Please specify --model_type explicitly."
-        )
-
-    pretrain_weights = args.pretrain_weights
-    print(f'Found pretrain_weights: {pretrain_weights}')
-
-    pretrain_weights_lower = pretrain_weights.lower()
-
+    # Try to detect model type, checking both the 'model_type' field (new format,
+    # written by convert_ckpt_to_pth.py) and the 'pretrain_weights' field (legacy format).
     detected_model_type = None
-    for model_type in MODEL_TYPE_MAP.keys():
-        if model_type in pretrain_weights_lower:
-            detected_model_type = model_type
-            break
 
+    # Check for explicit model_type field first (new format)
+    model_type_field = _ckpt_args_get(args, 'model_type')
+    if model_type_field is not None:
+        model_type_lower = model_type_field.lower()
+        if model_type_lower in MODEL_TYPE_MAP:
+            detected_model_type = model_type_lower
+            print(f'Found model_type in args: {detected_model_type}')
+
+    # Fall back to pretrain_weights field (legacy format)
     if detected_model_type is None:
-        raise ValueError(
-            f"Could not determine model type from pretrain_weights '{pretrain_weights}'. "
-            f"Please specify --model_type explicitly. "
-            f"Valid options: {list(MODEL_TYPE_MAP.keys())}"
-        )
+        pretrain_weights = _ckpt_args_get(args, 'pretrain_weights')
+        if pretrain_weights is not None:
+            print(f'Found pretrain_weights: {pretrain_weights}')
+            pretrain_weights_lower = pretrain_weights.lower()
+            for model_type in MODEL_TYPE_MAP.keys():
+                if model_type in pretrain_weights_lower:
+                    detected_model_type = model_type
+                    break
 
-    print(f'Detected model type: {detected_model_type}')
+    if detected_model_type is not None:
+        print(f'Detected model type: {detected_model_type}')
+    else:
+        print('Could not determine model type from checkpoint args.')
 
     # Read training resolution if available
-    resolution = getattr(args, 'resolution', None)
+    resolution = _ckpt_args_get(args, 'resolution')
     if resolution is not None:
         print(f'Detected training resolution: {resolution}')
 
@@ -274,11 +313,18 @@ def run_detector_batch(
         model_type = checkpoint_info['model_type']
     else:
         model_type = model_type.lower()
-        if model_type not in MODEL_TYPE_MAP:
-            raise ValueError(
-                f"Unknown model type: {model_type}. "
-                f"Valid options: {list(MODEL_TYPE_MAP.keys())}"
-            )
+
+    if model_type is None:
+        raise ValueError(
+            f"Could not determine model type from checkpoint. "
+            f"Please specify --model_type explicitly. "
+            f"Valid options: {list(MODEL_TYPE_MAP.keys())}"
+        )
+    if model_type not in MODEL_TYPE_MAP:
+        raise ValueError(
+            f"Unknown model type: {model_type}. "
+            f"Valid options: {list(MODEL_TYPE_MAP.keys())}"
+        )
 
     if image_size is None and checkpoint_info['resolution'] is not None:
         image_size = checkpoint_info['resolution']
@@ -535,7 +581,7 @@ def main():
         '--model_type',
         type=str,
         default=None,
-        choices=['nano', 'base', 'large'],
+        choices=['nano', 'small', 'base', 'medium', 'large'],
         help='Model architecture type. If not specified, will attempt to auto-detect from checkpoint.'
     )
 
