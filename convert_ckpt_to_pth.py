@@ -77,7 +77,7 @@ def convert_ckpt_to_pth(
     if not os.path.isfile(ckpt_path):
         raise FileNotFoundError(f'Checkpoint file not found: {ckpt_path}')
 
-    if os.path.exists(pth_path) and not overwrite:
+    if os.path.exists(pth_path) and (not overwrite):
         raise FileExistsError(
             f'Output file already exists: {pth_path}. '
             f'Use overwrite=True to replace it.'
