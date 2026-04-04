@@ -38,8 +38,7 @@ def convert_ckpt_to_pth(
     resolution,
     class_names=None,
     strip_optimizer=True,
-    overwrite=False
-):
+    overwrite=False):
     """
     Convert a PyTorch Lightning .ckpt checkpoint to the .pth format used by
     the rfdetr inference API and rf_detr_batch_inference.py.
@@ -195,8 +194,7 @@ def convert_ckpt_folder_to_pth(
     class_names=None,
     strip_optimizer=True,
     overwrite=False,
-    output_folder=None
-):
+    output_folder=None):
     """
     Convert all .ckpt files in a folder to .pth format.
 
