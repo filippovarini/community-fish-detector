@@ -20,10 +20,12 @@ These models represent an initial training effort. They perform reasonably well 
 
 ## Models
 
-| Model | Architecture | Input image size | Target classes | Dataset | License |
+| Model | Architecture | Input image size | Target classes | Dataset | Inference code license |
 |--|--|--|--|--|--|
 | [community-fish-detector-2026.02.02-rf-detr-nano-640.pth](https://github.com/filippovarini/community-fish-detector/releases/download/cfd-2026.02.02-rf-detr-nano/community-fish-detector-2026.02.02-rf-detr-nano-640.pth) | [RF-DETR Nano](https://rfdetr.roboflow.com/reference/nano/) | 640 |  1 (fish) | [Community Fish Detection Dataset](https://lila.science/datasets/community-fish-detection-dataset) | Apache |
 | [cfd-yolov12x-1.00.pt](https://github.com/WildHackers/community-fish-detector/releases/download/cfd-1.00-yolov12x/cfd-yolov12x-1.00.pt) | [YOLOv12x](https://docs.ultralytics.com/models/yolo12/) | 1024 |  1 (fish) | [Community Fish Detection Dataset](https://lila.science/datasets/community-fish-detection-dataset) | AGPL |
+
+This table only describes license information for the training and inference code.  The [training data](https://lila.science/datasets/community-fish-detection-dataset) is a composite of multiple datasets with a variety of licenses.
 
 ## Quick start
 
