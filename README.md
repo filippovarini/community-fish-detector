@@ -24,7 +24,7 @@ These models represent an initial training effort. They perform reasonably well 
 | Model | Architecture | Input image size | Target classes | Dataset | Inference code license |
 |--|--|--|--|--|--|
 | [community-fish-detector-2026.02.02-rf-detr-nano-640.pth](https://github.com/filippovarini/community-fish-detector/releases/download/cfd-2026.02.02-rf-detr-nano/community-fish-detector-2026.02.02-rf-detr-nano-640.pth) | [RF-DETR Nano](https://rfdetr.roboflow.com/reference/nano/) | 640 |  1 (fish) | [Community Fish Detection Dataset](https://lila.science/datasets/community-fish-detection-dataset) | Apache |
-| [cfd-yolov12x-1.00.pt](https://github.com/WildHackers/community-fish-detector/releases/download/cfd-1.00-yolov12x/cfd-yolov12x-1.00.pt) | [YOLOv12x](https://docs.ultralytics.com/models/yolo12/) | 1024 |  1 (fish) | [Community Fish Detection Dataset](https://lila.science/datasets/community-fish-detection-dataset) | AGPL |
+| [cfd-yolov12x-1.00.pt](https://github.com/filippovarini/community-fish-detector/releases/download/cfd-1.00-yolov12x/cfd-yolov12x-1.00.pt) | [YOLOv12x](https://docs.ultralytics.com/models/yolo12/) | 1024 |  1 (fish) | [Community Fish Detection Dataset](https://lila.science/datasets/community-fish-detection-dataset) | AGPL |
 
 This table only describes license information for the training and inference code.  The [training data](https://lila.science/datasets/community-fish-detection-dataset) is a composite of multiple datasets with a variety of licenses.
 
@@ -35,13 +35,13 @@ These instructions describe the process for running the RF-DETR version of the m
 ### Clone the repo
 
 ```bash
-git clone https://github.com/WildHackers/community-fish-detector.git
+git clone https://github.com/filippovarini/community-fish-detector.git
 cd community-fish-detector
 ```
 
 ### Download the model weights
 
-- You download weights from the [Releases page]([url](https://github.com/WildHackers/community-fish-detector/releases)).
+- You download weights from the [Releases page]([url](https://github.com/filippovarini/community-fish-detector/releases)).
 
 ### Install dependencies
 
@@ -109,7 +109,7 @@ If you use this model in your research or applications, please cite the GitHub r
 
 Or in plain text:
 
-> Varini, F., Morris, D., Burniston, S., Boulais, O., Barnard, K., et al. (2026). *Community Fish Detector*. GitHub. https://github.com/WildHackers/community-fish-detector
+> Varini, F., Morris, D., Burniston, S., Boulais, O., Barnard, K., et al. (2026). *Community Fish Detector*. GitHub. https://github.com/filippovarini/community-fish-detector
 
 ## Example Predictions
 
