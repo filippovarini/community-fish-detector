@@ -14,8 +14,9 @@ These models represent an initial training effort. They perform reasonably well 
 1. [Models](#models)  
 2. [Quick start](#quick-start)  
 3. [Contributors](#contributors)
-4. [Example predictions](#example-predictions)  
-5. [Also see](#also-see)  
+4. [Citing this work](#citing-this-work)  
+5. [Example predictions](#example-predictions)  
+6. [Also see](#also-see)  
 
 
 ## Models
@@ -92,6 +93,23 @@ This model was created by a collective effort of the following folks: <a href="h
 If you contributed, but you don't see your name here, please [email us](mailto:fppvrn@gmail.com).
 
 We welcome further contributions; if you have a dataset that could expand coverage, or want to contribute to improving the model, please [reach out](mailto:fppvrn@gmail.com)!
+
+## Citing this work
+
+If you use this model in your research or applications, please cite the GitHub repository:
+
+```bibtex
+@misc{community-fish-detector,
+  author       = {Varini, Filippo and Morris, Dan and Burniston, Sonny and Boulais, Oceane and Barnard, Kevin and others},
+  title        = {Community Fish Detector},
+  year         = {2026},
+  howpublished = {\url{https://github.com/WildHackers/community-fish-detector}},
+}
+```
+
+Or in plain text:
+
+> Varini, F., Morris, D., Burniston, S., Boulais, O., Barnard, K., et al. (2026). *Community Fish Detector*. GitHub. https://github.com/WildHackers/community-fish-detector
 
 ## Example Predictions
 
