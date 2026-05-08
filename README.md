@@ -103,7 +103,7 @@ If you use this model in your research or applications, please cite the GitHub r
   author       = {Varini, Filippo and Morris, Dan and Burniston, Sonny and Boulais, Oceane and Barnard, Kevin and others},
   title        = {Community Fish Detector},
   year         = {2026},
-  howpublished = {\url{https://github.com/WildHackers/community-fish-detector}},
+  howpublished = {\url{https://github.com/filippovarini/community-fish-detector}},
 }
 ```
 
