@@ -55,6 +55,9 @@ DEFAULT_CONFIDENCE_THRESHOLD = 0.005
 # Default maximum number of images to buffer ahead of inference
 DEFAULT_MAX_QUEUE_SIZE = 20
 
+# Default number of parallel image loading threads
+DEFAULT_LOADER_WORKERS = 4
+
 
 #%% Support functions
 
@@ -269,7 +272,7 @@ def run_detector_batch(
     image_folder,
     output_file,
     image_size=None,
-    loader_workers=4,
+    loader_workers=DEFAULT_LOADER_WORKERS,
     threshold=DEFAULT_CONFIDENCE_THRESHOLD,
     batch_size=1,
     model_type=None,
@@ -305,6 +308,19 @@ def run_detector_batch(
     assert os.path.isfile(detector_file), f'Detector file not found: {detector_file}'
     assert os.path.isdir(image_folder), f'Input folder not found: {image_folder}'
     assert output_file.endswith('.json'), 'Output file must have .json extension'
+
+    if loader_workers is None:
+        loader_workers = DEFAULT_LOADER_WORKERS
+    if threshold is None:
+        threshold = DEFAULT_CONFIDENCE_THRESHOLD
+    if batch_size is None:
+        batch_size = 1
+    if include_image_size is None:
+        include_image_size = False
+    if optimize_for_inference is None:
+        optimize_for_inference = False
+    if worker_type is None:
+        worker_type = 'thread'
 
     # Determine model type and training resolution from checkpoint metadata
     checkpoint_info = detect_model_info_from_checkpoint(detector_file)
