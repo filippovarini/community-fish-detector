@@ -21,12 +21,16 @@ These models represent an initial training effort. They perform reasonably well 
 
 ## Models
 
-| Model | Architecture | Input image size | Target classes | Dataset | Inference code license |
-|--|--|--|--|--|--|
-| [community-fish-detector-2026.02.02-rf-detr-nano-640.pth](https://github.com/filippovarini/community-fish-detector/releases/download/cfd-2026.02.02-rf-detr-nano/community-fish-detector-2026.02.02-rf-detr-nano-640.pth) | [RF-DETR Nano](https://rfdetr.roboflow.com/reference/nano/) | 640 |  1 (fish) | [Community Fish Detection Dataset](https://lila.science/datasets/community-fish-detection-dataset) | Apache |
-| [cfd-yolov12x-1.00.pt](https://github.com/filippovarini/community-fish-detector/releases/download/cfd-1.00-yolov12x/cfd-yolov12x-1.00.pt) | [YOLOv12x](https://docs.ultralytics.com/models/yolo12/) | 1024 |  1 (fish) | [Community Fish Detection Dataset](https://lila.science/datasets/community-fish-detection-dataset) | AGPL |
+| Model | Architecture | Input image size | Target classes | Training data | Inference license | AP |
+|--|--|--|--|--|--|--|
+| [cfd-2026.05.13-rf-detr-medium-1024](https://github.com/filippovarini/community-fish-detector/releases/download/2026.05.13-release/fish-detector-rf-detr-medium-1024-2026.03.24-checkpoint_11.stripped.pth) | [RF-DETR Medium](https://rfdetr.roboflow.com/reference/medium/) | 1024 |  1 (fish) | [Community Fish Detection Dataset](https://lila.science/datasets/community-fish-detection-dataset) | Apache | .609 |
+| [cfd-2026.05.13-rf-detr-small-1024](https://github.com/filippovarini/community-fish-detector/releases/download/2026.05.13-release/fish-detector-rf-detr-small-1024-2026.06.06-checkpoint_16.stripped.pth) | [RF-DETR Small](https://rfdetr.roboflow.com/reference/small/) | 1024 |  1 (fish) | [Community Fish Detection Dataset](https://lila.science/datasets/community-fish-detection-dataset) | Apache | .606 |
+| [cfd-2026.02.02-rf-detr-nano-640](https://github.com/filippovarini/community-fish-detector/releases/download/cfd-2026.02.02-rf-detr-nano/community-fish-detector-2026.02.02-rf-detr-nano-640.pth) | [RF-DETR Nano](https://rfdetr.roboflow.com/reference/nano/) | 640 |  1 (fish) | [Community Fish Detection Dataset](https://lila.science/datasets/community-fish-detection-dataset) | Apache | .596 |
+| [cfd-yolov12x-1.00](https://github.com/filippovarini/community-fish-detector/releases/download/cfd-1.00-yolov12x/cfd-yolov12x-1.00.pt) | [YOLOv12x](https://docs.ultralytics.com/models/yolo12/) | 1024 |  1 (fish) | [Community Fish Detection Dataset](https://lila.science/datasets/community-fish-detection-dataset) | AGPL | .588 |
 
-This table only describes license information for the training and inference code.  The [training data](https://lila.science/datasets/community-fish-detection-dataset) is a composite of multiple datasets with a variety of licenses.
+The "inference license" column describes license information for the inference code you're likely to use when you run each model: the [RF-DETR Python package](https://pypi.org/project/rfdetr/) for RF-DETR models, and the [Ultralytics package](https://pypi.org/project/ultralytics/) for Ultralyics models.  This column does not describe the licenses associated with the [training data](https://lila.science/datasets/community-fish-detection-dataset), which is a composite of multiple datasets with a variety of licenses.
+
+The "AP" column presents the average precision against the validation subset of the Community Fish Detection Dataset.  It's not straightforward to publish the splits we use (hopefully we will eventually, but we haven't done this yet), so you should not make anything of the absolute AP values.  This column is only useful to compare these models to each other and to future model releases.
 
 ## Quick start
 
@@ -44,7 +48,7 @@ cd community-fish-detector
 
 ### Download the model weights
 
-- You download weights from the [Releases page]([url](https://github.com/filippovarini/community-fish-detector/releases)).
+You can download weights from the [Releases page]([url](https://github.com/filippovarini/community-fish-detector/releases)), or using the links in the summary table above.
 
 ### Install dependencies
 
@@ -87,7 +91,7 @@ annotated = label_annotator.annotate(annotated, detections, labels=labels)
 annotated.save("/path/to/your/output.jpg")
 ```
 
-Be sure to specify `resolution=640`; the RF-DETR Nano architecture defaults to 384, but our detector was fine-tuned at 640, and we expect that you will get better results at 640.  This is not necessary for the batch inference script, which automatically detects the training size.
+Be sure to specify the resolution (640 in this case, since this example uses the RF-DETR Nano model).  Specifying the inference resolution is not necessary when you're using the batch inference script, which automatically detects the training size.
 
 #### Testing everything
 
