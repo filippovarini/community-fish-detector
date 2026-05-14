@@ -4,19 +4,19 @@ This repository provides pretrained object detection models for identifying one 
 
 The model was trained on the [Community Fish Detection Dataset](https://lila.science/datasets/community-fish-detection-dataset), a collaboratively built, large-scale dataset that unifies >1.9 million images and >935,000 fish bounding boxes from 17 open datasets spanning freshwater, marine, and lab environments.
 
-With this project, our goal is to detect any fish, anywhere. 
+With this project, our goal is to detect any fish, anywhere.
 
 These models represent an initial training effort. They perform reasonably well across a variety of environments but can certainly be improved. If you’d like to contribute improvements or new experiments, [please get in touch](mailto:fppvrn@gmail.com)!
 
 
 ## Table of Contents
 
-1. [Models](#models)  
-2. [Quick start](#quick-start)  
+1. [Models](#models)
+2. [Quick start](#quick-start)
 3. [Contributors](#contributors)
-4. [Citing this work](#citing-this-work)  
-5. [Example predictions](#example-predictions)  
-6. [Also see](#also-see)  
+4. [Citing this work](#citing-this-work)
+5. [Example predictions](#example-predictions)
+6. [Also see](#also-see)
 
 
 ## Models
@@ -30,7 +30,10 @@ This table only describes license information for the training and inference cod
 
 ## Quick start
 
-These instructions describe the process for running the RF-DETR version of the model.  The YOLOv12x version is deprecated, but you can see instructions for running it in an [older version of this README](https://github.com/filippovarini/community-fish-detector/tree/35564151a9f0f9c639ec5d0eb758fe35a64fa687?tab=readme-ov-file#quick-start).
+These instructions describe the process for running RF-DETR versions of the CFD.
+
+The YOLOv12x version is deprecated, and future models will be based on RF-DETR, because the AGPL license used by YOLOv12x and related model families is prohibitive for some of the use cases we'd like to support.  If you want to run the YOLOv12x version, see [README-yolo.md](README-yolo.md).
+
 
 ### Clone the repo
 
@@ -46,12 +49,12 @@ cd community-fish-detector
 ### Install dependencies
 
 ```bash
-pip install -r requirements.txt 
+pip install -r requirements.txt
 ```
 
 ### Run inference
 
-#### Command-line batch inference 
+#### Command-line batch inference
 
 `rf_detr_batch_inference.py` runs the model recursively on a folder of images, and writes results in [MegaDetector output format](http://lila.science/megadetector-output-format).
 
@@ -85,6 +88,21 @@ annotated.save("/path/to/your/output.jpg")
 ```
 
 Be sure to specify `resolution=640`; the RF-DETR Nano architecture defaults to 384, but our detector was fine-tuned at 640, and we expect that you will get better results at 640.  This is not necessary for the batch inference script, which automatically detects the training size.
+
+#### Testing everything
+
+You can test the whole pipeline as follows, assuming you are in a conda shell and you are in the repo root.  `test_community_fish_detector` will download weights for one of the models (defaults to the `medium` model), run it on the test images in this repo, and open a preview of the results in a browser.
+
+```bash
+# Create a conda environment
+conda create -n cfd-inference python=3.12 pip -y && conda activate cfd-inference
+
+# Install dependencies
+pip install -r requirements.txt --upgrade --force --no-cache-dir
+
+# Download weights, run the model, and generate a preview of the results
+python test_community_fish_detector.py
+```
 
 ## Contributors
 
