@@ -21,9 +21,9 @@ model_urls = {}
 model_urls['nano'] = \
     'https://github.com/filippovarini/community-fish-detector/releases/download/cfd-2026.02.02-rf-detr-nano/community-fish-detector-2026.02.02-rf-detr-nano-640.pth'
 model_urls['small'] = \
-    'https://github.com/filippovarini/community-fish-detector/releases/download/untagged-51131fe79ba02df0e793/fish-detector-rf-detr-small-1024-2026.06.06-checkpoint_16.stripped.pth'
+    'https://github.com/filippovarini/community-fish-detector/releases/download/2026.05.13-release/fish-detector-rf-detr-small-1024-2026.06.06-checkpoint_16.stripped.pth'
 model_urls['medium'] = \
-    'https://github.com/filippovarini/community-fish-detector/releases/download/untagged-51131fe79ba02df0e793/fish-detector-rf-detr-medium-1024-2026.03.24-checkpoint_11.stripped.pth'
+    'https://github.com/filippovarini/community-fish-detector/releases/download/2026.05.13-release/fish-detector-rf-detr-medium-1024-2026.03.24-checkpoint_11.stripped.pth'
 
 cfd_tmp_folder = os.path.join(tempfile.gettempdir(),'community-fish-detector-test')
 test_image_folder = './test-images'
