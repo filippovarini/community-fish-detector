@@ -13,6 +13,8 @@ import urllib.request
 
 from megadetector.utils.path_utils import insert_before_extension
 from megadetector.visualization.visualize_detector_output import visualize_detector_output
+from megadetector.visualization.visualize_video_output import \
+    visualize_video_output, VideoVisualizationOptions
 from megadetector.utils.path_utils import open_file
 
 from rf_detr_batch_inference import run_detector_batch # type: ignore
@@ -58,19 +60,20 @@ def test_community_fish_detector():
 
     print('Running model, writing results to {}'.format(output_file))
 
-    # Run model
+    # Run model, sampling videos at 4 fps (time_sample=0.25)
     run_detector_batch(
         detector_file=model_file,
         image_folder=test_image_folder,
         output_file=output_file,
-        image_size=None
+        image_size=None,
+        time_sample=0.25
     )
 
-    # Preview results
+    # Preview image results
     preview_folder = os.path.join(cfd_tmp_folder,'preview')
     html_output_file = os.path.join(preview_folder,'index.html')
 
-    print('Finished running model, writing results preview to {}'.format(preview_folder))
+    print('Finished running model, writing image results preview to {}'.format(preview_folder))
 
     visualize_detector_output(detector_output_path=output_file,
                               out_dir=preview_folder,
@@ -81,7 +84,17 @@ def test_community_fish_detector():
                               random_seed=0,
                               html_output_file=html_output_file)
 
-    open_file(html_output_file)
+    print('Writing video results preview to {}'.format(preview_folder))
+
+    video_options = VideoVisualizationOptions()
+    video_options.confidence_threshold = 0.25
+
+    visualize_video_output(detector_output_path=output_file,
+                           out_dir=preview_folder,
+                           video_dir=test_image_folder,
+                           options=video_options)
+
+    open_file(preview_folder)
 
 # ...def def test_community_fish_detector(...)
 

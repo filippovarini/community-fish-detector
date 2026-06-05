@@ -3,10 +3,15 @@
 """
 rf_detr_batch_inference.py
 
-Run an RF-DETR detector on a folder of images, producing output in the
-MegaDetector batch output format.
+Run an RF-DETR detector on a folder of images and/or videos (or a single image
+or video file), producing output in the MegaDetector batch output format.
 
 http://lila.science/megadetector-output-format
+
+Videos are handled by sampling frames (by default one frame per second) and
+running the detector on each sampled frame; per-frame detections are collected
+into a single per-video entry in the output file, following the video
+conventions described in the format spec.
 """
 
 #%% Imports and constants
@@ -17,6 +22,8 @@ import os
 import sys
 import time
 import torch
+
+import numpy as np
 
 from datetime import datetime
 from PIL import Image
@@ -35,6 +42,11 @@ from megadetector.utils.ct_utils import round_float, round_float_array
 from megadetector.utils.ct_utils import sort_list_of_dicts_by_key
 from megadetector.detection.run_detector import CONF_DIGITS, COORD_DIGITS
 from megadetector.utils.path_utils import find_images
+
+# Video support, all leveraged from the MegaDetector package
+from megadetector.detection.video_utils import find_videos, is_video_file
+from megadetector.detection.video_utils import run_callback_on_frames_for_folder
+from megadetector.detection.video_utils import _filename_to_frame_number
 
 # Mapping from model type strings to RF-DETR classes.
 #
@@ -57,6 +69,11 @@ DEFAULT_MAX_QUEUE_SIZE = 20
 
 # Default number of parallel image loading threads
 DEFAULT_LOADER_WORKERS = 4
+
+# When sampling frames from video and neither a frame interval nor a time
+# interval is specified, sample frames at this rate (in seconds).  For a typical
+# 30 fps video, this samples roughly every 30th frame.
+DEFAULT_SECONDS_PER_VIDEO_FRAME = 1.0
 
 
 #%% Support functions
@@ -265,62 +282,35 @@ def convert_detections_to_md_format(detections, image_width, image_height):
 # ...def convert_detections_to_md_format(...)
 
 
-#%% Batch inference function
+#%% Model loading
 
-def run_detector_batch(
-    detector_file,
-    image_folder,
-    output_file,
-    image_size=None,
-    loader_workers=DEFAULT_LOADER_WORKERS,
-    threshold=DEFAULT_CONFIDENCE_THRESHOLD,
-    batch_size=1,
-    model_type=None,
-    include_image_size=False,
-    optimize_for_inference=False,
-    worker_type='thread'
-):
+def load_model(detector_file,
+               image_size=None,
+               model_type=None,
+               optimize_for_inference=False,
+               batch_size=1):
     """
-    Run RF-DETR detector on all images in a folder.
+    Load an RF-DETR model from a checkpoint, auto-detecting the model type and
+    training resolution when they aren't specified.
 
     Args:
         detector_file (str): Path to .pth checkpoint file
-        image_folder (str): Path to folder containing images
-        output_file (str): Path to output .json file
-        image_size (int, optional): Image resolution for inference, None to load architecture
-            default
-        loader_workers (int, optional): Number of parallel image loaders
-        threshold (float, optional): Confidence threshold for detections
-        batch_size (int, optional): Batch size for inference
-        model_type (str, optional): Model type ('nano', 'base', 'large') or None to auto-detect
-        include_image_size (bool, optional): Whether to include image dimensions in output
-        optimize_for_inference (bool, optional): Whether to optimize the model for inference,
-            which should be a free lunch, but as of 9/2025 there is some risk of accuracy
-            regression
-        worker_type (str, optional): 'thread' or 'process' for image loading workers
-            (default: 'thread')
+        image_size (int, optional): Image resolution for inference, None to use the
+            resolution recorded in the checkpoint (or the architecture default)
+        model_type (str, optional): Model type ('nano', 'small', 'base', 'medium',
+            'large') or None to auto-detect from the checkpoint
+        optimize_for_inference (bool, optional): Whether to optimize the model for
+            inference, which should be a free lunch, but as of 9/2025 there is some
+            risk of accuracy regression
+        batch_size (int, optional): Batch size to pass to optimize_for_inference()
 
     Returns:
-        dict: Results dictionary in MegaDetector format
+        dict: Dictionary with keys:
+            - 'model': the loaded RF-DETR model
+            - 'model_type' (str): resolved model type
+            - 'image_size' (int): resolved inference resolution
+            - 'detection_categories' (dict): mapping from string category IDs to class names
     """
-
-    # Validate inputs
-    assert os.path.isfile(detector_file), f'Detector file not found: {detector_file}'
-    assert os.path.isdir(image_folder), f'Input folder not found: {image_folder}'
-    assert output_file.endswith('.json'), 'Output file must have .json extension'
-
-    if loader_workers is None:
-        loader_workers = DEFAULT_LOADER_WORKERS
-    if threshold is None:
-        threshold = DEFAULT_CONFIDENCE_THRESHOLD
-    if batch_size is None:
-        batch_size = 1
-    if include_image_size is None:
-        include_image_size = False
-    if optimize_for_inference is None:
-        optimize_for_inference = False
-    if worker_type is None:
-        worker_type = 'thread'
 
     # Determine model type and training resolution from checkpoint metadata
     checkpoint_info = detect_model_info_from_checkpoint(detector_file)
@@ -376,17 +366,48 @@ def run_detector_batch(
     for i_class,class_name in enumerate(class_names):
         detection_categories[str(i_class)] = class_name
 
-    # Find all images
-    print(f'Searching for images in {image_folder}...')
-    image_files = find_images(image_folder, recursive=True, return_relative_paths=False)
-    print(f'Found {len(image_files)} images')
+    return {
+        'model': model,
+        'model_type': model_type,
+        'image_size': image_size,
+        'detection_categories': detection_categories
+    }
 
-    if len(image_files) == 0:
-        print('No images found, exiting')
-        return None
+# ...def load_model(...)
 
-    # Process images using a producer/consumer pattern: loader threads populate a
-    # bounded queue, and the main thread pulls from that queue for inference.
+
+#%% Image inference
+
+def _run_detector_on_images(model,
+                            image_files,
+                            image_folder,
+                            threshold=DEFAULT_CONFIDENCE_THRESHOLD,
+                            batch_size=1,
+                            loader_workers=DEFAULT_LOADER_WORKERS,
+                            worker_type='thread',
+                            include_image_size=False):
+    """
+    Run [model] on a list of image files, returning per-image results in
+    MegaDetector format.
+
+    Images are processed using a producer/consumer pattern: loader threads (or
+    processes) populate a bounded queue, and the calling thread pulls from that
+    queue for inference.
+
+    Args:
+        model: a loaded RF-DETR model (from load_model)
+        image_files (list): absolute paths to the images to process
+        image_folder (str): base folder used to compute relative output paths
+        threshold (float, optional): confidence threshold for detections
+        batch_size (int, optional): batch size for inference
+        loader_workers (int, optional): number of parallel image loaders
+        worker_type (str, optional): 'thread' or 'process' for image loading workers
+        include_image_size (bool, optional): whether to include image dimensions in output
+
+    Returns:
+        list: per-image result dicts in MegaDetector format
+    """
+
     results = []
     start_time = time.time()
 
@@ -418,9 +439,8 @@ def run_detector_batch(
     # Consumer: pull loaded images from the queue and run inference in batches
     n_producers_finished = 0
     n_total_producers = len(producers)
-    n_batches = math.ceil(len(image_files) / batch_size)
 
-    pbar = tqdm(total=len(image_files), desc='Processing')
+    pbar = tqdm(total=len(image_files), desc='Processing images')
 
     while (n_producers_finished < n_total_producers):
 
@@ -505,6 +525,330 @@ def run_detector_batch(
     images_per_second = len(image_files) / elapsed if elapsed > 0 else 0
     print(f'Processed {len(image_files)} images in {elapsed:.1f}s ({images_per_second:.2f} images/sec)')
 
+    return results
+
+# ...def _run_detector_on_images(...)
+
+
+#%% Video inference
+
+def _run_detector_on_videos(model,
+                            video_folder,
+                            video_files_relative,
+                            threshold=DEFAULT_CONFIDENCE_THRESHOLD,
+                            frame_sample=None,
+                            time_sample=None,
+                            verbose=False):
+    """
+    Run [model] on a list of videos, returning one per-video result dict in
+    MegaDetector format for each video.
+
+    Frame extraction and sampling are handled by the MegaDetector package; we
+    supply a per-frame callback that runs the detector on each sampled frame.
+    Per-frame detections are collected into a single per-video entry, with a
+    'frame_number' added to each detection and a sorted 'frames_processed' list,
+    following the video conventions in the MegaDetector output format.
+
+    Args:
+        model: a loaded RF-DETR model (from load_model)
+        video_folder (str): base folder used to compute relative output paths and to
+            resolve [video_files_relative]
+        video_files_relative (list): video paths relative to [video_folder]
+        threshold (float, optional): confidence threshold for detections
+        frame_sample (int, optional): process every Nth frame; mutually exclusive
+            with time_sample
+        time_sample (float, optional): process frames every N seconds; mutually
+            exclusive with frame_sample
+        verbose (bool, optional): enable additional debug output
+
+    Returns:
+        list: per-video result dicts in MegaDetector format
+    """
+
+    assert not ((frame_sample is not None) and (time_sample is not None)), \
+        'frame_sample and time_sample are mutually exclusive'
+
+    # The MegaDetector frame helpers use a single "every_n_frames" parameter, where
+    # a negative value is interpreted as a sampling interval in seconds.
+    if time_sample is not None:
+        every_n_frames = -1 * time_sample
+    else:
+        every_n_frames = frame_sample
+
+    start_time = time.time()
+
+    def frame_callback(image_np, frame_id):
+        """
+        Run the detector on a single video frame.
+
+        Args:
+            image_np (numpy.ndarray): frame data in PIL orientation/channel order (RGB)
+            frame_id (str): synthetic frame filename, e.g. "frame000030.jpg"
+
+        Returns:
+            dict: {'file': frame_id, 'detections': [...]} in MegaDetector format
+        """
+
+        if image_np.dtype != np.uint8:
+            image_np = image_np.astype(np.uint8)
+        frame_image = Image.fromarray(image_np)
+        img_width, img_height = frame_image.size
+
+        try:
+            detections = model.predict(frame_image, threshold=threshold)
+        except Exception as e:
+            print(f'Error during inference on frame {frame_id}: {e}')
+            return {'file': frame_id, 'detections': []}
+
+        md_detections = convert_detections_to_md_format(
+            detections, img_width, img_height)
+
+        return {'file': frame_id, 'detections': md_detections}
+
+    # ...def frame_callback(...)
+
+    # [md_results] is a dict with keys 'video_filenames' (list of relative str),
+    # 'frame_rates' (list of float), and 'results' (list, one element per video, of
+    # lists of per-frame callback return values).  For failed videos, the frame rate
+    # is -1 and 'results' is a dict with at least the key 'failure'.
+    md_results = run_callback_on_frames_for_folder(
+        input_video_folder=video_folder,
+        frame_callback=frame_callback,
+        every_n_frames=every_n_frames,
+        verbose=verbose,
+        files_to_process_relative=video_files_relative,
+        error_on_empty_video=False)
+
+    video_results = md_results['results']
+    video_filenames = md_results['video_filenames']
+    video_frame_rates = md_results['frame_rates']
+
+    assert len(video_results) == len(video_filenames)
+    assert len(video_results) == len(video_frame_rates)
+
+    results = []
+
+    # i_video = 0; results_this_video = video_results[i_video]
+    for i_video, results_this_video in enumerate(video_results):
+
+        video_fn = video_filenames[i_video]
+
+        im = {}
+        im['file'] = video_fn
+        im['frame_rate'] = video_frame_rates[i_video]
+        im['frames_processed'] = []
+
+        if isinstance(results_this_video, dict):
+
+            # This was a failed video
+            assert 'failure' in results_this_video
+            im['failure'] = results_this_video['failure']
+            im['detections'] = None
+
+        else:
+
+            im['detections'] = []
+
+            # results_one_frame = results_this_video[0]
+            for results_one_frame in results_this_video:
+
+                assert results_one_frame['file'].startswith(video_fn)
+
+                frame_number = _filename_to_frame_number(results_one_frame['file'])
+
+                assert frame_number not in im['frames_processed'], \
+                    'Received the same frame twice for video {}'.format(im['file'])
+
+                im['frames_processed'].append(frame_number)
+
+                for det in results_one_frame['detections']:
+                    det['frame_number'] = frame_number
+
+                # This is a no-op if there were no above-threshold detections
+                # in this frame
+                im['detections'].extend(results_one_frame['detections'])
+
+            # ...for each frame
+
+        # ...was this a failed video?
+
+        im['frames_processed'] = sorted(im['frames_processed'])
+
+        results.append(im)
+
+    # ...for each video
+
+    elapsed = time.time() - start_time
+    print(f'Processed {len(video_results)} videos in {elapsed:.1f}s')
+
+    return results
+
+# ...def _run_detector_on_videos(...)
+
+
+#%% Batch inference function
+
+def run_detector_batch(
+    detector_file,
+    image_folder,
+    output_file,
+    image_size=None,
+    loader_workers=DEFAULT_LOADER_WORKERS,
+    threshold=DEFAULT_CONFIDENCE_THRESHOLD,
+    batch_size=1,
+    model_type=None,
+    include_image_size=False,
+    optimize_for_inference=False,
+    worker_type='thread',
+    skip_images=False,
+    skip_video=False,
+    frame_sample=None,
+    time_sample=None,
+    verbose=False
+):
+    """
+    Run RF-DETR detector on the images and/or videos in a folder, or on a single
+    image or video file.
+
+    Args:
+        detector_file (str): Path to .pth checkpoint file
+        image_folder (str): Path to a folder (searched recursively for images and/or
+            videos) or to a single image or video file.  Despite the name, this may
+            contain videos and/or be a single file; the name is retained for backward
+            compatibility.
+        output_file (str): Path to output .json file
+        image_size (int, optional): Image resolution for inference, None to load architecture
+            default
+        loader_workers (int, optional): Number of parallel image loaders
+        threshold (float, optional): Confidence threshold for detections
+        batch_size (int, optional): Batch size for inference (images only; video frames
+            are processed one at a time)
+        model_type (str, optional): Model type ('nano', 'base', 'large') or None to auto-detect
+        include_image_size (bool, optional): Whether to include image dimensions in output
+            (images only)
+        optimize_for_inference (bool, optional): Whether to optimize the model for inference,
+            which should be a free lunch, but as of 9/2025 there is some risk of accuracy
+            regression
+        worker_type (str, optional): 'thread' or 'process' for image loading workers
+            (default: 'thread')
+        skip_images (bool, optional): ignore images, only process videos
+        skip_video (bool, optional): ignore videos, only process images
+        frame_sample (int, optional): sample every Nth frame from videos; mutually
+            exclusive with time_sample
+        time_sample (float, optional): sample frames every N seconds from videos;
+            mutually exclusive with frame_sample.  If neither frame_sample nor
+            time_sample is specified, defaults to DEFAULT_SECONDS_PER_VIDEO_FRAME.
+        verbose (bool, optional): enable additional debug output
+
+    Returns:
+        dict: Results dictionary in MegaDetector format
+    """
+
+    # Validate and normalize inputs
+    assert os.path.isfile(detector_file), f'Detector file not found: {detector_file}'
+    assert os.path.exists(image_folder), f'Input file/folder not found: {image_folder}'
+    assert output_file.endswith('.json'), 'Output file must have .json extension'
+
+    if loader_workers is None:
+        loader_workers = DEFAULT_LOADER_WORKERS
+    if threshold is None:
+        threshold = DEFAULT_CONFIDENCE_THRESHOLD
+    if batch_size is None:
+        batch_size = 1
+    if include_image_size is None:
+        include_image_size = False
+    if optimize_for_inference is None:
+        optimize_for_inference = False
+    if worker_type is None:
+        worker_type = 'thread'
+
+    if skip_images and skip_video:
+        raise ValueError('Cannot skip both images and videos')
+
+    if (frame_sample is not None) and (time_sample is not None):
+        raise ValueError('frame_sample and time_sample are mutually exclusive')
+
+    # Default the video sampling rate if the caller didn't specify one
+    if (frame_sample is None) and (time_sample is None):
+        time_sample = DEFAULT_SECONDS_PER_VIDEO_FRAME
+
+    # Determine the set of images and videos to process, and the base folder used
+    # to compute relative output paths.
+    if os.path.isfile(image_folder):
+
+        input_base_folder = os.path.dirname(image_folder)
+        if is_video_file(image_folder):
+            image_files = []
+            video_files = [] if skip_video else [image_folder]
+        else:
+            image_files = [] if skip_images else [image_folder]
+            video_files = []
+
+    else:
+
+        input_base_folder = image_folder
+
+        if skip_images:
+            image_files = []
+        else:
+            print(f'Searching for images in {image_folder}...')
+            image_files = find_images(image_folder, recursive=True,
+                                      return_relative_paths=False)
+            print(f'Found {len(image_files)} images')
+
+        if skip_video:
+            video_files = []
+        else:
+            print(f'Searching for videos in {image_folder}...')
+            video_files = find_videos(image_folder, recursive=True,
+                                      return_relative_paths=False)
+            print(f'Found {len(video_files)} videos')
+
+    # ...whether the input is a file or a folder
+
+    if (len(image_files) == 0) and (len(video_files) == 0):
+        print('No images or videos found, exiting')
+        return None
+
+    # Load the model once; we'll use it for both images and videos
+    model_info = load_model(detector_file,
+                            image_size=image_size,
+                            model_type=model_type,
+                            optimize_for_inference=optimize_for_inference,
+                            batch_size=batch_size)
+    model = model_info['model']
+    model_type = model_info['model_type']
+    image_size = model_info['image_size']
+    detection_categories = model_info['detection_categories']
+
+    results = []
+
+    # Process images
+    if len(image_files) > 0:
+        results.extend(_run_detector_on_images(
+            model=model,
+            image_files=image_files,
+            image_folder=input_base_folder,
+            threshold=threshold,
+            batch_size=batch_size,
+            loader_workers=loader_workers,
+            worker_type=worker_type,
+            include_image_size=include_image_size))
+
+    # Process videos
+    if len(video_files) > 0:
+        video_files_relative = \
+            [os.path.relpath(fn, input_base_folder).replace('\\', '/')
+             for fn in video_files]
+        results.extend(_run_detector_on_videos(
+            model=model,
+            video_folder=input_base_folder,
+            video_files_relative=video_files_relative,
+            threshold=threshold,
+            frame_sample=frame_sample,
+            time_sample=time_sample,
+            verbose=verbose))
+
     results = sort_list_of_dicts_by_key(results,'file')
 
     # Build output structure
@@ -543,7 +887,8 @@ def run_detector_batch(
 def main():
 
     parser = argparse.ArgumentParser(
-        description='Run RF-DETR detector on a folder of images, producing MegaDetector-format output'
+        description='Run RF-DETR detector on a folder of images and/or videos (or a '
+                    'single image or video file), producing MegaDetector-format output'
     )
 
     parser.add_argument(
@@ -555,7 +900,8 @@ def main():
     parser.add_argument(
         'folder',
         type=str,
-        help='Path to folder containing images (searched recursively)'
+        help='Path to a folder containing images and/or videos (searched recursively), '
+             'or to a single image or video file'
     )
 
     parser.add_argument(
@@ -621,6 +967,39 @@ def main():
         help='Use threads or processes for image loading workers (default: thread)'
     )
 
+    parser.add_argument(
+        '--skip_images',
+        action='store_true',
+        help='Ignore images, only process videos'
+    )
+
+    parser.add_argument(
+        '--skip_video',
+        action='store_true',
+        help='Ignore videos, only process images'
+    )
+
+    parser.add_argument(
+        '--frame_sample',
+        type=int,
+        default=None,
+        help='Sample every Nth frame from videos (mutually exclusive with --time_sample)'
+    )
+
+    parser.add_argument(
+        '--time_sample',
+        type=float,
+        default=None,
+        help='Sample frames every N seconds from videos (default: {}); mutually '
+             'exclusive with --frame_sample'.format(DEFAULT_SECONDS_PER_VIDEO_FRAME)
+    )
+
+    parser.add_argument(
+        '--verbose',
+        action='store_true',
+        help='Enable additional debug output'
+    )
+
     if len(sys.argv) == 1:
         parser.print_help()
         sys.exit(1)
@@ -638,7 +1017,12 @@ def main():
         model_type=args.model_type,
         include_image_size=args.include_image_size,
         optimize_for_inference=args.optimize_for_inference,
-        worker_type=args.worker_type
+        worker_type=args.worker_type,
+        skip_images=args.skip_images,
+        skip_video=args.skip_video,
+        frame_sample=args.frame_sample,
+        time_sample=args.time_sample,
+        verbose=args.verbose
     )
 
 

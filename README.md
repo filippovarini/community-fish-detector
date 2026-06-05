@@ -38,7 +38,6 @@ These instructions describe the process for running RF-DETR versions of the CFD.
 
 The YOLOv12x version is deprecated, and future models will be based on RF-DETR, because the AGPL license used by YOLOv12x and related model families is prohibitive for some of the use cases we'd like to support.  If you want to run the YOLOv12x version, see [README-yolo.md](README-yolo.md).
 
-
 ### Clone the repo
 
 ```bash
@@ -60,11 +59,23 @@ pip install -r requirements.txt
 
 #### Command-line batch inference
 
-`rf_detr_batch_inference.py` runs the model recursively on a folder of images, and writes results in [MegaDetector output format](http://lila.science/megadetector-output-format).
+`rf_detr_batch_inference.py` runs the model recursively on a folder of images and/or videos (or on a single image or video file), and writes results in [MegaDetector output format](http://lila.science/megadetector-output-format).
 
 ```bash
-python rf_detr_batch_inference.py "/path/to/your/model.pth" "/path/to/your/image/folder" "/path/to/your/output/file.json"
+python rf_detr_batch_inference.py "/path/to/your/model.pth" "/path/to/your/input/folder" "/path/to/your/output/file.json"
 ```
+
+The input can be a folder (searched recursively for images and videos) or a single image or video file.  Images and videos found in the same folder are written to the same output file.
+
+For videos, the model is run on sampled frames.  By default one frame per second is sampled; use `--time_sample` to change the sampling interval in seconds, or `--frame_sample` to sample every Nth frame instead.
+
+Useful options:
+
+* `--skip_images` / `--skip_video`: process only videos, or only images
+* `--time_sample N`: sample one frame every N seconds from videos (default: 1.0)
+* `--frame_sample N`: sample every Nth frame from videos (mutually exclusive with `--time_sample`)
+
+Run `python rf_detr_batch_inference.py` with no arguments to see all available options.
 
 #### Programmatic inference
 
@@ -108,6 +119,7 @@ pip install -r requirements.txt --upgrade --force --no-cache-dir
 python test_community_fish_detector.py
 ```
 
+
 ## Contributors
 
 This model was created by a collective effort of the following folks: <a href="https://www.linkedin.com/in/filippo-varini/">Filippo Varini</a>, <a href="https://dmorris.net">Dan Morris</a>, <a href="https://www.linkedin.com/in/sonny-burniston/">Sonny Burniston</a>, <a href="https://www.oceaneboulais.net/">Oceane Boulais</a>, <a href="https://www.mbari.org/person/kevin-barnard/">Kevin Barnard</a>, <a href="https://www.mbari.org/person/laura-chrobak/">Laura Chrobak</a>, <a href="https://alexvmt.github.io/">Alexander Merdian-Tarko</a>, <a href="https://www.linkedin.com/in/kameswari-devi-ayyagari-031820b7/">Devi Ayyagari</a>, <a href="https://www.linkedin.com/in/mona-dhiflaoui/">Mona Dhiflaoui</a>, <a href="https://www.linkedin.com/in/jiashu-chen-w/">Joshua Chen</a>, Gerard Calvo Bartra, Kalindi Fonda, Levi Veevee Cai, Giorgio De Pertis, Chris Jackett, Aditya Shirvalkar, Adrian Ibanez,  and many others.
@@ -115,6 +127,7 @@ This model was created by a collective effort of the following folks: <a href="h
 If you contributed, but you don't see your name here, please [email us](mailto:fppvrn@gmail.com).
 
 We welcome further contributions; if you have a dataset that could expand coverage, or want to contribute to improving the model, please [reach out](mailto:fppvrn@gmail.com)!
+
 
 ## Citing this work
 
@@ -148,3 +161,7 @@ Below we provide some visual examples that overlay the ground truth with the mod
 ## Also see
 
 * [Hugging Face Space](https://huggingface.co/spaces/FathomNet/community-fish-detector) for this model set up by the [FathomNet](https://www.fathomnet.org/) community.
+
+## Test video credit
+
+The test video in the `test-images` folder comes from [@amnart-keawted-2221199](https://www.pexels.com/@amnart-keawted-2221199) on pexels.com.
