@@ -80,9 +80,12 @@ DEFAULT_SECONDS_PER_VIDEO_FRAME = 1.0
 
 def _ckpt_args_get(args, field, default=None):
     """
-    Get a field from checkpoint args, handling both dict and Namespace formats.
+    Get a field from training arguments stored in a checkpoint.  Because
+    of changes in the RF-DETR training stack in early 2026, this requires
+    handling both dict and Namespace formats, hence this helper function.
 
     New checkpoints (PTL training stack) store args as a plain dict.
+
     Legacy checkpoints (pre-PTL engine) stored args as an argparse.Namespace.
 
     Args:
@@ -93,6 +96,7 @@ def _ckpt_args_get(args, field, default=None):
     Returns:
         The field value, or default if not found.
     """
+
     if isinstance(args, dict):
         return args.get(field, default)
     return getattr(args, field, default)
@@ -102,17 +106,13 @@ def detect_model_info_from_checkpoint(checkpoint_path):
     """
     Detect model type and training resolution from a checkpoint file.
 
-    Supports both legacy .pth checkpoints (argparse.Namespace args with
-    pretrain_weights) and new .pth checkpoints (dict args, as produced by the
-    PTL training stack or convert_ckpt_to_pth.py).
-
     Args:
         checkpoint_path (str): Path to .pth checkpoint file
 
     Returns:
         dict: Dictionary with keys:
             - 'model_type' (str or None): e.g. 'nano', 'base', 'large', or None
-              if not determinable
+              if model type is not found
             - 'resolution' (int or None): training resolution, or None if not found
 
     Raises:
@@ -122,9 +122,7 @@ def detect_model_info_from_checkpoint(checkpoint_path):
     if checkpoint_path.lower().endswith('.ckpt'):
         raise ValueError(
             f"Cannot run inference directly from a .ckpt file: {checkpoint_path}\n"
-            f"PyTorch Lightning .ckpt checkpoints must be converted to .pth format first.\n"
-            f"Use convert_ckpt_to_pth.py to convert:\n"
-            f"  python convert_ckpt_to_pth.py {checkpoint_path} <model_type> <resolution>"
+            f"PyTorch Lightning .ckpt checkpoints must be converted to .pth format first."
         )
 
     print(f'Reading checkpoint metadata from: {checkpoint_path}')
@@ -189,6 +187,7 @@ def load_image(image_path):
     Returns:
         PIL.Image or None: Loaded image, or None if loading failed
     """
+
     try:
         img = Image.open(image_path)
         # Convert to RGB if necessary (handles grayscale, RGBA, etc.)
@@ -198,6 +197,8 @@ def load_image(image_path):
     except Exception as e:
         print(f'Error loading image {image_path}: {e}')
         return None
+
+# ...def load_image(...)
 
 
 def _producer_func(q, image_paths, image_folder):
@@ -323,7 +324,7 @@ def load_model(detector_file,
     if model_type is None:
         raise ValueError(
             f"Could not determine model type from checkpoint. "
-            f"Please specify --model_type explicitly. "
+            f"Specify --model_type explicitly. "
             f"Valid options: {list(MODEL_TYPE_MAP.keys())}"
         )
     if model_type not in MODEL_TYPE_MAP:
@@ -351,6 +352,12 @@ def load_model(detector_file,
 
     if optimize_for_inference:
         model.optimize_for_inference(batch_size=batch_size)
+
+        # optimize_for_inference is off by default because it reportedly created
+        # inference errors in some environments.  This comment suggests that specifying
+        # dtype=bfloat16 allows us to have our cake and eat it too, but I haven't
+        # tested this.
+        #
         # https://github.com/roboflow/rf-detr/issues/326#issuecomment-3321838797
         # model.optimize_for_inference(batch_size=batch_size,dtype=torch.bfloat16)
 
