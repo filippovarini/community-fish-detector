@@ -34,9 +34,9 @@ import math
 from multiprocessing import Process
 from threading import Thread
 
-# RF-DETR model classes
-from rfdetr import RFDETRBase, RFDETRLarge
-from rfdetr import RFDETRNano, RFDETRSmall, RFDETRMedium
+# RF-DETR: models are loaded via rfdetr.from_checkpoint(), which resolves the
+# variant architecture and training resolution from metadata in the checkpoint.
+import rfdetr
 
 from megadetector.utils.ct_utils import round_float, round_float_array
 from megadetector.utils.ct_utils import sort_list_of_dicts_by_key
@@ -47,19 +47,6 @@ from megadetector.utils.path_utils import find_images
 from megadetector.detection.video_utils import find_videos, is_video_file
 from megadetector.detection.video_utils import run_callback_on_frames_for_folder
 from megadetector.detection.video_utils import _filename_to_frame_number
-
-# Mapping from model type strings to RF-DETR classes.
-#
-# 'base' is an older/internal name that predates the current public naming
-# (nano, small, medium, large).  It's kept here for backward compatibility
-# with legacy checkpoints whose pretrain_weights field contains 'base'.
-MODEL_TYPE_MAP = {
-    'nano': RFDETRNano,
-    'small': RFDETRSmall,
-    'base': RFDETRBase,
-    'medium': RFDETRMedium,
-    'large': RFDETRLarge,
-}
 
 # By default, exclude detections below this confidence level
 DEFAULT_CONFIDENCE_THRESHOLD = 0.005
@@ -78,114 +65,15 @@ DEFAULT_SECONDS_PER_VIDEO_FRAME = 1.0
 
 #%% Support functions
 
-def _ckpt_args_get(args, field, default=None):
-    """
-    Get a field from training arguments stored in a checkpoint.  Because
-    of changes in the RF-DETR training stack in early 2026, this requires
-    handling both dict and Namespace formats, hence this helper function.
-
-    New checkpoints (PTL training stack) store args as a plain dict.
-
-    Legacy checkpoints (pre-PTL engine) stored args as an argparse.Namespace.
-
-    Args:
-        args: The checkpoint['args'] value (dict or Namespace).
-        field (str): Field name to retrieve.
-        default: Value returned when the field is absent.
-
-    Returns:
-        The field value, or default if not found.
-    """
-
-    if isinstance(args, dict):
-        return args.get(field, default)
-    return getattr(args, field, default)
-
-
-def detect_model_info_from_checkpoint(checkpoint_path):
-    """
-    Detect model type and training resolution from a checkpoint file.
-
-    Args:
-        checkpoint_path (str): Path to .pth checkpoint file
-
-    Returns:
-        dict: Dictionary with keys:
-            - 'model_type' (str or None): e.g. 'nano', 'base', 'large', or None
-              if model type is not found
-            - 'resolution' (int or None): training resolution, or None if not found
-
-    Raises:
-        ValueError: If a .ckpt file is passed instead of a .pth file
-    """
-
-    if checkpoint_path.lower().endswith('.ckpt'):
-        raise ValueError(
-            f"Cannot run inference directly from a .ckpt file: {checkpoint_path}\n"
-            f"PyTorch Lightning .ckpt checkpoints must be converted to .pth format first."
-        )
-
-    print(f'Reading checkpoint metadata from: {checkpoint_path}')
-
-    checkpoint = torch.load(checkpoint_path, weights_only=False, map_location='cpu')
-
-    if 'args' not in checkpoint:
-        print('Checkpoint does not contain args; model type and resolution must '
-              'be specified explicitly.')
-        return {'model_type': None, 'resolution': None}
-
-    args = checkpoint['args']
-
-    # Try to detect model type, checking both the 'model_type' field (new format,
-    # written by convert_ckpt_to_pth.py) and the 'pretrain_weights' field (legacy format).
-    detected_model_type = None
-
-    # Check for explicit model_type field first (new format)
-    model_type_field = _ckpt_args_get(args, 'model_type')
-    if model_type_field is not None:
-        model_type_lower = model_type_field.lower()
-        if model_type_lower in MODEL_TYPE_MAP:
-            detected_model_type = model_type_lower
-            print(f'Found model_type in args: {detected_model_type}')
-
-    # Fall back to pretrain_weights field (legacy format)
-    if detected_model_type is None:
-        pretrain_weights = _ckpt_args_get(args, 'pretrain_weights')
-        if pretrain_weights is not None:
-            print(f'Found pretrain_weights: {pretrain_weights}')
-            pretrain_weights_lower = pretrain_weights.lower()
-            for model_type in MODEL_TYPE_MAP.keys():
-                if model_type in pretrain_weights_lower:
-                    detected_model_type = model_type
-                    break
-
-    if detected_model_type is not None:
-        print(f'Detected model type: {detected_model_type}')
-    else:
-        print('Could not determine model type from checkpoint args.')
-
-    # Read training resolution if available
-    resolution = _ckpt_args_get(args, 'resolution')
-    if resolution is not None:
-        print(f'Detected training resolution: {resolution}')
-
-    return {
-        'model_type': detected_model_type,
-        'resolution': resolution
-    }
-
-# ...def detect_model_info_from_checkpoint(...)
-
-
 def load_image(image_path):
     """
     Load an image from disk.
 
     Args:
-        image_path (str): Path to image file
+        image_path (str): path to image file
 
     Returns:
-        PIL.Image or None: Loaded image, or None if loading failed
+        PIL.Image or None: loaded image, or None if loading failed
     """
 
     try:
@@ -228,12 +116,12 @@ def convert_detections_to_md_format(detections, image_width, image_height):
     Convert RF-DETR/Supervision detections to MegaDetector format.
 
     Args:
-        detections: Supervision Detections object with xyxy, confidence, class_id
-        image_width (int): Image width in pixels
-        image_height (int): Image height in pixels
+        detections: supervision Detections object with xyxy, confidence, class_id
+        image_width (int): image width in pixels
+        image_height (int): image height in pixels
 
     Returns:
-        list: List of detection dicts in MegaDetector format
+        list: list of detection dicts in MegaDetector format
     """
 
     md_detections = []
@@ -287,70 +175,66 @@ def convert_detections_to_md_format(detections, image_width, image_height):
 
 def load_model(detector_file,
                image_size=None,
-               model_type=None,
                optimize_for_inference=False,
                batch_size=1):
     """
-    Load an RF-DETR model from a checkpoint, auto-detecting the model type and
-    training resolution when they aren't specified.
+    Load an RF-DETR model from an inference-ready .pth checkpoint via
+    rfdetr.from_checkpoint(), which resolves the variant architecture, training
+    resolution, and class names from metadata stored in the checkpoint.
 
     Args:
-        detector_file (str): Path to .pth checkpoint file
-        image_size (int, optional): Image resolution for inference, None to use the
-            resolution recorded in the checkpoint (or the architecture default)
-        model_type (str, optional): Model type ('nano', 'small', 'base', 'medium',
-            'large') or None to auto-detect from the checkpoint
-        optimize_for_inference (bool, optional): Whether to optimize the model for
+        detector_file (str): path to .pth checkpoint file.  Must be in the new
+            format (containing a top-level 'model_config'), as produced by
+            convert_ckpt_to_pth.py or update_legacy_pth_file.py.
+        image_size (int, optional): image resolution for inference.  None uses the
+            training resolution recorded in the checkpoint; a value overrides it.
+        optimize_for_inference (bool, optional): whether to optimize the model for
             inference, which should be a free lunch, but as of 9/2025 there is some
-            risk of accuracy regression
-        batch_size (int, optional): Batch size to pass to optimize_for_inference()
+            risk of accuracy regression.
+        batch_size (int, optional): batch size to pass to optimize_for_inference()
 
     Returns:
-        dict: Dictionary with keys:
+        dict: dictionary with keys:
             - 'model': the loaded RF-DETR model
-            - 'model_type' (str): resolved model type
+            - 'model_type' (str): resolved variant class name (e.g. 'RFDETRSmall')
             - 'image_size' (int): resolved inference resolution
             - 'detection_categories' (dict): mapping from string category IDs to class names
     """
 
-    # Determine model type and training resolution from checkpoint metadata
-    checkpoint_info = detect_model_info_from_checkpoint(detector_file)
-
-    if model_type is None:
-        model_type = checkpoint_info['model_type']
-    else:
-        model_type = model_type.lower()
-
-    if model_type is None:
+    if detector_file.lower().endswith('.ckpt'):
         raise ValueError(
-            f"Could not determine model type from checkpoint. "
-            f"Specify --model_type explicitly. "
-            f"Valid options: {list(MODEL_TYPE_MAP.keys())}"
-        )
-    if model_type not in MODEL_TYPE_MAP:
-        raise ValueError(
-            f"Unknown model type: {model_type}. "
-            f"Valid options: {list(MODEL_TYPE_MAP.keys())}"
+            f"Cannot run inference directly from a .ckpt file: {detector_file}\n"
+            f"Convert it to an inference-ready .pth first with convert_ckpt_to_pth.py."
         )
 
-    if image_size is None and checkpoint_info['resolution'] is not None:
-        image_size = checkpoint_info['resolution']
-        print(f'Using training resolution from checkpoint: {image_size}')
+    # This script uses rfdetr.from_checkpoint(), which relies on a 'model_config' field
+    # that was not present in old CFD releases.
+    print(f'Reading checkpoint metadata from: {detector_file}')
+    checkpoint = torch.load(detector_file, weights_only=False, map_location='cpu')
+    if 'model_config' not in checkpoint:
+        raise ValueError(
+            f"Model file '{detector_file}' is in an older format that this inference "
+            f"script no longer supports (missing 'model_config' metadata). If you "
+            f"downloaded a released model, download the updated version of "
+            f"this model file."
+        )
+    del checkpoint
 
-    # Load model
-    print(f'Loading {model_type} model from {detector_file}...')
-    model_class = MODEL_TYPE_MAP[model_type]
+    # Load the model, letting from_checkpoint() resolve the model type and resolution.
+    #
+    # A caller-supplied image_size overrides the loaded resolution.
+    from_checkpoint_kwargs = {}
     if image_size is not None:
-        model = model_class(resolution=image_size, pretrain_weights=detector_file)
-        assert image_size == model.model_config.resolution, 'Model image size error'
-    else:
-        model = model_class(pretrain_weights=detector_file)
-        image_size = model.model_config.resolution
-        print('Using default architecture image size: {}'.format(image_size))
+        from_checkpoint_kwargs['resolution'] = image_size
+    print(f'Loading model from {detector_file}...')
+    model = rfdetr.from_checkpoint(detector_file, **from_checkpoint_kwargs)
 
-    print('Model loaded successfully')
+    model_type = type(model).__name__
+    image_size = model.model_config.resolution
+    print(f'Loaded {model_type} at resolution {image_size}')
 
     if optimize_for_inference:
+
         model.optimize_for_inference(batch_size=batch_size)
 
         # optimize_for_inference is off by default because it reportedly created
@@ -373,7 +257,8 @@ def load_model(detector_file,
     for i_class,class_name in enumerate(class_names):
         detection_categories[str(i_class)] = class_name
 
-    return {
+    return \
+    {
         'model': model,
         'model_type': model_type,
         'image_size': image_size,
@@ -703,7 +588,6 @@ def run_detector_batch(
     loader_workers=DEFAULT_LOADER_WORKERS,
     threshold=DEFAULT_CONFIDENCE_THRESHOLD,
     batch_size=1,
-    model_type=None,
     include_image_size=False,
     optimize_for_inference=False,
     worker_type='thread',
@@ -718,22 +602,21 @@ def run_detector_batch(
     image or video file.
 
     Args:
-        detector_file (str): Path to .pth checkpoint file
-        image_folder (str): Path to a folder (searched recursively for images and/or
+        detector_file (str): path to .pth checkpoint file
+        image_folder (str): path to a folder (searched recursively for images and/or
             videos) or to a single image or video file.  Despite the name, this may
             contain videos and/or be a single file; the name is retained for backward
             compatibility.
-        output_file (str): Path to output .json file
-        image_size (int, optional): Image resolution for inference, None to load architecture
+        output_file (str): path to output .json file
+        image_size (int, optional): image resolution for inference, None to load architecture
             default
-        loader_workers (int, optional): Number of parallel image loaders
-        threshold (float, optional): Confidence threshold for detections
-        batch_size (int, optional): Batch size for inference (images only; video frames
+        loader_workers (int, optional): number of parallel image loaders
+        threshold (float, optional): confidence threshold for detections
+        batch_size (int, optional): batch size for inference (images only; video frames
             are processed one at a time)
-        model_type (str, optional): Model type ('nano', 'base', 'large') or None to auto-detect
-        include_image_size (bool, optional): Whether to include image dimensions in output
+        include_image_size (bool, optional): whether to include image dimensions in output
             (images only)
-        optimize_for_inference (bool, optional): Whether to optimize the model for inference,
+        optimize_for_inference (bool, optional): whether to optimize the model for inference,
             which should be a free lunch, but as of 9/2025 there is some risk of accuracy
             regression
         worker_type (str, optional): 'thread' or 'process' for image loading workers
@@ -820,7 +703,6 @@ def run_detector_batch(
     # Load the model once; we'll use it for both images and videos
     model_info = load_model(detector_file,
                             image_size=image_size,
-                            model_type=model_type,
                             optimize_for_inference=optimize_for_inference,
                             batch_size=batch_size)
     model = model_info['model']
@@ -889,7 +771,7 @@ def run_detector_batch(
 # ...def run_detector_batch(...)
 
 
-#%% Command-line interface
+#%% Command-line driver
 
 def main():
 
@@ -944,14 +826,6 @@ def main():
         type=int,
         default=1,
         help='Batch size for inference (default: 1)'
-    )
-
-    parser.add_argument(
-        '--model_type',
-        type=str,
-        default=None,
-        choices=['nano', 'small', 'base', 'medium', 'large'],
-        help='Model architecture type. If not specified, will attempt to auto-detect from checkpoint.'
     )
 
     parser.add_argument(
@@ -1021,7 +895,6 @@ def main():
         loader_workers=args.loader_workers,
         threshold=args.threshold,
         batch_size=args.batch_size,
-        model_type=args.model_type,
         include_image_size=args.include_image_size,
         optimize_for_inference=args.optimize_for_inference,
         worker_type=args.worker_type,
