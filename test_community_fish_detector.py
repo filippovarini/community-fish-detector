@@ -130,3 +130,44 @@ def test_community_fish_detector():
 if __name__ == '__main__':
 
     test_community_fish_detector()
+
+
+#%% Scrap
+
+if False:
+
+    pass
+
+    #%% Test cell from the README
+
+    weights_file = os.path.join(cfd_tmp_folder,'cfd-rf-detr-medium-1024-2026.03.24.cp-011.20260706-release.pth')
+    image_file = 'c:/git/community-fish-detector/test-images/val_00027681JPEGImages_#_kakadu_9942.jpg.jpg'
+    output_file = 'g:/temp/test.jpg'
+
+    assert os.path.isfile(weights_file)
+    assert os.path.isfile(image_file)
+
+    import supervision as sv
+    from PIL import Image
+
+    # Load model
+    # from rfdetr import RFDETRMedium, from_checkpoint
+    # model = RFDETRMedium(pretrain_weights=weights_file, resolution=640)
+
+    model = from_checkpoint(weights_file)
+
+    # Run on an image
+    image = Image.open(image_file)
+    detections = model.predict(image, threshold=0.3)
+
+    # Annotate and save the result
+    box_annotator = sv.BoxAnnotator()
+    label_annotator = sv.LabelAnnotator()
+
+    labels = [f"fish {conf:.2f}" for conf in detections.confidence]
+
+    annotated = box_annotator.annotate(image.copy(), detections)
+    annotated = label_annotator.annotate(annotated, detections, labels=labels)
+    annotated.save(output_file)
+
+    open_file(output_file)

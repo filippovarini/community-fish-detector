@@ -78,18 +78,18 @@ Run `python rf_detr_batch_inference.py` with no arguments to see all available o
 #### Programmatic inference
 
 ```python
-from rfdetr import RFDETRNano
 import supervision as sv
+from rfdetr import from_checkpoint
 from PIL import Image
 
 # Load model
-model = RFDETRNano(pretrain_weights="/path/to/your/model.pth", resolution=640)
+model = from_checkpoint("/path/to/your/model.pth")
 
 # Run on an image
 image = Image.open("/path/to/your/image.jpg")
 detections = model.predict(image, threshold=0.3)
 
-# Annotate and save the result
+# Draw the resulting detections on the image and save the result
 box_annotator = sv.BoxAnnotator()
 label_annotator = sv.LabelAnnotator()
 
@@ -99,8 +99,6 @@ annotated = box_annotator.annotate(image.copy(), detections)
 annotated = label_annotator.annotate(annotated, detections, labels=labels)
 annotated.save("/path/to/your/output.jpg")
 ```
-
-Be sure to specify the resolution (640 in this case, since this example uses the RF-DETR Nano model).  Specifying the inference resolution is not necessary when you're using the batch inference script, which automatically detects the training size.
 
 #### Testing everything
 
