@@ -75,6 +75,23 @@ Useful options:
 
 Run `python rf_detr_batch_inference.py` with no arguments to see all available options.
 
+#### Threshold/model comparison helper
+
+`rf_detr_threshold_sweep.py` runs the batch inference script across one or more RF-DETR checkpoints and confidence thresholds, then writes per-run MegaDetector JSON files plus a CSV and Markdown summary. This is intended for smoke testing and threshold comparison; it is not a benchmark and does not produce accuracy or AP conclusions.
+
+```bash
+python rf_detr_threshold_sweep.py \
+  --input "/path/to/images_or_videos" \
+  --output_dir "/path/to/sweep-output" \
+  --model nano="/path/to/cfd-rf-detr-nano.pth" \
+  --model small="/path/to/cfd-rf-detr-small.pth" \
+  --image_size nano=640 \
+  --image_size small=1024 \
+  --thresholds 0.05 0.10 0.25 0.50
+```
+
+The script does not download model weights automatically. Use `--overwrite` to replace existing output files.
+
 #### Programmatic inference
 
 ```python
