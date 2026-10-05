@@ -189,9 +189,10 @@ def load_model(detector_file,
         image_size (int, optional): image resolution for inference.  None uses the
             training resolution recorded in the checkpoint; a value overrides it.
         optimize_for_inference (bool, optional): whether to optimize the model for
-            inference, which should be a free lunch, but as of 9/2025 there is some
-            risk of accuracy regression.
-        batch_size (int, optional): batch size to pass to optimize_for_inference()
+            inference: on NVIDIA GPUs, run in float16, and compile the model if [batch_size]
+            is 1.  This is much faster, but results differ slightly from the unoptimized
+            model.  Ignored (with a message) on other devices.
+        batch_size (int, optional): batch size the caller will use for inference
 
     Returns:
         dict: dictionary with keys:
@@ -199,6 +200,7 @@ def load_model(detector_file,
             - 'model_type' (str): resolved variant class name (e.g. 'RFDETRSmall')
             - 'image_size' (int): resolved inference resolution
             - 'detection_categories' (dict): mapping from string category IDs to class names
+            - 'optimized_for_inference' (bool): whether the model was optimized
     """
 
     if detector_file.lower().endswith('.ckpt'):
@@ -233,17 +235,28 @@ def load_model(detector_file,
     image_size = model.model_config.resolution
     print(f'Loaded {model_type} at resolution {image_size}')
 
+    optimized = False
     if optimize_for_inference:
-
-        model.optimize_for_inference(batch_size=batch_size)
-
-        # optimize_for_inference is off by default because it reportedly created
-        # inference errors in some environments.  This comment suggests that specifying
-        # dtype=bfloat16 allows us to have our cake and eat it too, but I haven't
-        # tested this.
-        #
-        # https://github.com/roboflow/rf-detr/issues/326#issuecomment-3321838797
-        # model.optimize_for_inference(batch_size=batch_size,dtype=torch.bfloat16)
+        device = model.model.device
+        if device.type != 'cuda':
+            print(f'Inference optimization is only supported on NVIDIA GPUs, running '
+                  f'without optimization on {device.type}')
+        else:
+            # Half precision provides most of the speedup.  Compiling (TorchScript tracing)
+            # saves a few milliseconds per call, so it only helps at batch size 1; at larger
+            # batch sizes, the traced model needs much more GPU memory, and it only accepts
+            # batches of the size it was compiled for.
+            compile_model = (batch_size == 1)
+            print('Optimizing model for inference (float16, {})'.format(
+                'compiled' if compile_model else 'not compiled'))
+            # optimize_for_inference() was renamed to inference() in rfdetr 1.9.0, and
+            # removed in 1.11.0
+            if hasattr(model, 'inference'):
+                optimize_fn = model.inference
+            else:
+                optimize_fn = model.optimize_for_inference
+            optimize_fn(compile=compile_model, batch_size=batch_size, dtype=torch.float16)
+            optimized = True
 
     # Get class names from model
     #
@@ -262,7 +275,8 @@ def load_model(detector_file,
         'model': model,
         'model_type': model_type,
         'image_size': image_size,
-        'detection_categories': detection_categories
+        'detection_categories': detection_categories,
+        'optimized_for_inference': optimized
     }
 
 # ...def load_model(...)
@@ -616,9 +630,9 @@ def run_detector_batch(
             are processed one at a time)
         include_image_size (bool, optional): whether to include image dimensions in output
             (images only)
-        optimize_for_inference (bool, optional): whether to optimize the model for inference,
-            which should be a free lunch, but as of 9/2025 there is some risk of accuracy
-            regression
+        optimize_for_inference (bool, optional): whether to optimize the model for inference
+            (on NVIDIA GPUs only; see load_model), which is much faster, but changes results
+            slightly
         worker_type (str, optional): 'thread' or 'process' for image loading workers
             (default: 'thread')
         skip_images (bool, optional): ignore images, only process videos
@@ -709,6 +723,7 @@ def run_detector_batch(
     model_type = model_info['model_type']
     image_size = model_info['image_size']
     detection_categories = model_info['detection_categories']
+    optimized_for_inference = model_info['optimized_for_inference']
 
     results = []
 
@@ -749,6 +764,7 @@ def run_detector_batch(
             'detector_metadata': {
                 'model_type': model_type,
                 'image_size': image_size,
+                'optimized_for_inference': optimized_for_inference,
                 'confidence_threshold': threshold
             }
         },
@@ -837,7 +853,8 @@ def main():
     parser.add_argument(
         '--optimize_for_inference',
         action='store_true',
-        help='Run optimize_for_inference() after model load'
+        help='Optimize the model for faster inference (NVIDIA GPUs only); results differ '
+             'slightly from the unoptimized model'
     )
 
     parser.add_argument(
